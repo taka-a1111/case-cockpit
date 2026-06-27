@@ -217,6 +217,7 @@ function dateLabelJP(dateStr) {
   const n = daysUntil(dateStr);
   if (n === null) return null;
   if (n === 0) return { text: "今日", overdue: false };
+  if (n === 1) return { text: "明日", overdue: false };
   if (n < 0) return { text: `${-n}日前`, overdue: true };
   const parts = String(dateStr).split("-").map(Number);
   if (parts.length < 3 || parts.some(isNaN)) return { text: `あと${n}日`, overdue: false };
@@ -1215,7 +1216,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
 
 function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging, moveOpen, onHandlePointerDown, onMove, onChangeDue, onChangeStart }) {
   const judge = taskJudgeDate(t); // いつやる（start）優先、なければ期限（due）。レーン判定と一致させる
-  const d = dueMeta(judge);
+  const lab = judge ? dateLabelJP(judge) : null;
   const jn = judge ? daysUntil(judge) : null;
   // 赤は「期限超過」のみ。今日は青、それ以外はグレー
   const chipColor = jn === null ? C.ink3 : (jn < 0 ? "#FF6B6B" : jn === 0 ? C.accent : C.ink2);
@@ -1258,7 +1259,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
         <div style={S.dueWrap}>
           <button style={{ ...S.dueChip, color: judge ? chipColor : C.ink3, borderColor: judge ? chipColor + "44" : C.line }}
             onClick={() => setDueOpen((v) => !v)} title="いつやるかを変更">
-            <CalendarDays size={12} strokeWidth={2.3} />{judge ? d.text : "日付"}
+            <CalendarDays size={12} strokeWidth={2.3} />{lab ? lab.text : "日付"}
           </button>
           {dueOpen && (
             <>
