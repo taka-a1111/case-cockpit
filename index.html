@@ -326,10 +326,14 @@ export default function App() {
   const openProjectTask = (project, taskId) => { setFocusTaskId(taskId || null); setEditing(project); };
   const [confirmDel, setConfirmDel] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [editTask, setEditTask] = useState(null); // { pid, tid, focus } サブタスク単体の編集
+  const removeTaskFromProject = (pid, tid) =>
+    persist(projects.map((p) => p.id !== pid ? p : { ...p, tasks: p.tasks.filter((t) => t.id !== tid) }));
 
   // 「戻る」：開いているオーバーレイを閉じる → なければ前の画面へ
   const goBack = () => {
     if (confirmDel) { setConfirmDel(null); return; }
+    if (editTask) { setEditTask(null); return; }
     if (showSettings) { setShowSettings(false); return; }
     if (editing) { setEditing(null); setFocusTaskId(null); return; }
     setNavStack((s) => { if (!s.length) return s; setView(s[s.length - 1]); return s.slice(0, -1); });
@@ -569,7 +573,7 @@ export default function App() {
         <div style={S.viewDots}>
           {VIEWS.map((v) => <span key={v} style={{ ...S.viewDot, ...(view === v ? S.viewDotOn : {}) }} />)}
         </div>
-        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} />}
+        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} />}
         {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onChangeLane={changeLane} onChangeDue={changeDue} onAddTask={addTaskToLane} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={setEditing} />}
       </main>
@@ -592,8 +596,22 @@ export default function App() {
         />
       )}
 
+      {/* ===== サブタスク単体の編集シート ===== */}
+      {editTask && (() => {
+        const p = projects.find((x) => x.id === editTask.pid);
+        const t = p && p.tasks.find((x) => x.id === editTask.tid);
+        if (!p || !t) return null;
+        return (
+          <SubtaskSheet project={p} task={t} focus={editTask.focus}
+            onClose={() => setEditTask(null)}
+            onUpdate={(patch) => updateTask(editTask.pid, editTask.tid, patch)}
+            onToggle={() => { toggleTask(editTask.pid, editTask.tid); setEditTask(null); }}
+            onDelete={() => { removeTaskFromProject(editTask.pid, editTask.tid); setEditTask(null); }} />
+        );
+      })()}
+
       {/* ===== 右下フローティング＋ボタン（Googleカレンダー方式） ===== */}
-      {!editing && !showSettings && !confirmDel && (
+      {!editing && !showSettings && !confirmDel && !editTask && (
         <button style={S.fab} onClick={() => setEditing(blankDraft())} title="案件を追加" aria-label="案件を追加">
           <Plus size={26} strokeWidth={2.6} />
         </button>
@@ -605,7 +623,7 @@ export default function App() {
 /* ============================================================
    フォーカス（ダッシュボード）
    ============================================================ */
-function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit }) {
+function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
   const [sortMode, setSortMode] = useState("manual");
@@ -816,7 +834,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
         </div>
         {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
         <div style={S.grid}>
-          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onDragHandle={sortMode === "manual" ? startDrag : undefined} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onDragHandle={sortMode === "manual" ? startDrag : undefined} dragging={dragId === p.id} dragActive={dragId !== null} />)}
         </div>
       </section>
     </div>
@@ -903,26 +921,12 @@ function ProjectsView({ projects, onOpen }) {
   );
 }
 
-function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onDragHandle, dragging, dragActive }) {
+function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onDragHandle, dragging, dragActive }) {
   const replyN = replyTasksOf(p).length;
   const li = linkInfo(p.replyUrl);
   const dl = p.deadline ? dateLabelJP(p.deadline) : null;
-  const [editId, setEditId] = useState(null);
-  const [editFocus, setEditFocus] = useState("title");
-  const editRef = useRef(null);
   const lpTimer = useRef(null);
   const downInfo = useRef(null);
-  // 編集中：編集ボックス以外のどこをタップしても、編集を閉じるだけ（詳細は開かない）
-  useEffect(() => {
-    if (!editId) return;
-    const onDocClick = (e) => {
-      if (editRef.current && editRef.current.contains(e.target)) return;
-      e.stopPropagation();
-      setEditId(null);
-    };
-    document.addEventListener("click", onDocClick, true);
-    return () => document.removeEventListener("click", onDocClick, true);
-  }, [editId]);
   const openTasks = p.tasks
     .filter((t) => !t.done && t.kind !== "reply")
     .sort((a, b) => {
@@ -935,7 +939,6 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onDragHandle, dra
   const moreTasks = openTasks.length - showTasks.length;
   const stop = (e) => e.stopPropagation();
   const openPicker = (e) => { e.stopPropagation(); const inp = e.currentTarget.querySelector("input"); try { inp && inp.showPicker && inp.showPicker(); } catch {} };
-  const upd = (tid, patch) => onUpdateTask && onUpdateTask(p.id, tid, patch);
   const draggable = !!onDragHandle;
   // カード本体をどこでも長押し→ドラッグ開始（タスク行・ボタン等はそれぞれ pointerdown を止めるので対象外）
   const cardDown = (e) => {
@@ -960,7 +963,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onDragHandle, dra
       style={{ ...S.card, ...(dragging ? S.cardDragging : {}), ...(dragActive && !dragging ? S.cardDragOther : {}) }}
       role="button" tabIndex={0}
       onPointerDown={cardDown} onPointerMove={cardMove} onPointerUp={cardUp} onPointerCancel={cardUp}
-      onClick={() => { if (editId) setEditId(null); else onOpen(p); }}>
+      onClick={() => onOpen(p)}>
       {replyN > 0 && (
         <div style={S.cardHead}>
           <span style={S.cardReplyPill}><Reply size={12} strokeWidth={2.4} />要返信{replyN}</span>
@@ -985,29 +988,14 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onDragHandle, dra
       {showTasks.length > 0 && (
         <div style={S.cardTaskList}>
           {showTasks.map((t) => {
-            if (editId === t.id) {
-              return (
-                <div key={t.id} ref={editRef} style={S.cardTaskEdit} onClick={stop} onPointerDown={stop}>
-                  <input autoFocus={editFocus !== "date"} style={S.cardTaskEditInput} value={t.title}
-                    placeholder="やること"
-                    onChange={(e) => upd(t.id, { title: e.target.value })}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); setEditId(null); } }} />
-                  <div style={S.cardTaskEditDates}>
-                    <DateField value={t.start} placeholder="いつやる" onChange={(v) => upd(t.id, { start: v })} autoOpen={editFocus === "date"} />
-                    <DateField value={t.due} placeholder="期限" onChange={(v) => upd(t.id, { due: v })} />
-                  </div>
-                </div>
-              );
-            }
             const lab = dateLabelJP(taskJudgeDate(t));
             return (
               <div key={t.id} style={S.cardTaskRow} onPointerDown={stop}
-                onClick={(e) => { stop(e); setEditFocus("title"); setEditId(t.id); }}>
+                onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "title"); }}>
                 <span style={S.cardTaskDot} />
-                <span style={S.cardTaskTitle}
-                  onClick={(e) => { stop(e); setEditFocus("title"); setEditId(t.id); }}>{t.title || "（無題）"}</span>
+                <span style={S.cardTaskTitle}>{t.title || "（無題）"}</span>
                 {lab && <span style={lab.overdue ? S.cardTaskOver : S.cardTaskDate}
-                  onClick={(e) => { stop(e); setEditFocus("date"); setEditId(t.id); }}>{lab.text}</span>}
+                  onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "date"); }}>{lab.text}</span>}
               </div>
             );
           })}
@@ -1988,6 +1976,51 @@ function CalendarView({ projects, onOpen }) {
 /* ============================================================
    小物コンポーネント
    ============================================================ */
+function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDelete }) {
+  const [confirm, setConfirm] = useState(false);
+  return (
+    <>
+      <div style={S.scrim} onClick={onClose} />
+      <aside style={S.taskSheet}>
+        <div style={S.taskSheetHead}>
+          <span style={S.taskSheetProject}>{project.company}</span>
+          <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
+        </div>
+        <div style={S.taskSheetBody}>
+          <input style={S.titleInput} value={task.title} placeholder="やること"
+            autoFocus={focus === "title"}
+            onChange={(e) => onUpdate({ title: e.target.value })}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); onClose(); } }} />
+          <div style={S.infoRow}>
+            <Clock size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
+            <DateField value={task.start} placeholder="いつやる" onChange={(v) => onUpdate({ start: v })} autoOpen={focus === "date"} />
+          </div>
+          <div style={S.infoRow}>
+            <CalendarDays size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
+            <DateField value={task.due} placeholder="期限" onChange={(v) => onUpdate({ due: v })} />
+          </div>
+        </div>
+        <div style={S.taskSheetFoot}>
+          {confirm ? (
+            <div style={S.delConfirm}>
+              <span style={S.delText}>削除しますか？</span>
+              <button style={S.delYes} onClick={onDelete}>削除</button>
+              <button style={S.delNo} onClick={() => setConfirm(false)}>戻る</button>
+            </div>
+          ) : (
+            <>
+              <button style={S.delBtn} onClick={() => setConfirm(true)}><Trash2 size={15} />削除</button>
+              <div style={{ flex: 1 }} />
+              <button style={S.taskDoneBtn} onClick={onToggle}>
+                <CheckCircle2 size={16} strokeWidth={2.4} />{task.done ? "未完了に戻す" : "完了にする"}
+              </button>
+            </>
+          )}
+        </div>
+      </aside>
+    </>
+  );
+}
 function DateField({ value, placeholder, onChange, autoOpen }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -2311,6 +2344,18 @@ const S = {
 
   /* drawer */
   scrim: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 40 },
+  taskSheet: {
+    position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 50,
+    background: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    borderTop: `1px solid ${C.line}`, boxShadow: "0 -12px 40px rgba(0,0,0,0.5)",
+    display: "flex", flexDirection: "column", maxWidth: 620, marginLeft: "auto", marginRight: "auto",
+    maxHeight: "85vh",
+  },
+  taskSheetHead: { display: "flex", alignItems: "center", gap: 10, padding: "14px 16px 6px" },
+  taskSheetProject: { flex: 1, fontSize: 14, color: C.ink3, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  taskSheetBody: { padding: "4px 18px 8px", display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" },
+  taskSheetFoot: { display: "flex", alignItems: "center", gap: 8, padding: "12px 18px", paddingBottom: "calc(16px + env(safe-area-inset-bottom, 0px))", borderTop: `1px solid ${C.line}` },
+  taskDoneBtn: { display: "inline-flex", alignItems: "center", gap: 6, border: "none", background: C.accent, color: "#fff", borderRadius: 10, padding: "10px 16px", fontSize: 14.5, fontWeight: 700 },
   drawer: {
     position: "fixed", top: 0, right: 0, bottom: 0, width: "min(620px, 100vw)", zIndex: 50,
     background: C.bg, display: "flex", flexDirection: "column", boxShadow: "-12px 0 40px rgba(0,0,0,0.4)",
