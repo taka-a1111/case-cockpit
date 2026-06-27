@@ -2136,7 +2136,7 @@ const S = {
   resultCount: { marginLeft: "auto", fontSize: 14, color: C.ink3, fontWeight: 600, fontFamily: F.disp },
 
   /* card grid — PCでも1〜2列に抑える */
-  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))", gap: 14, alignItems: "stretch" },
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(400px, 100%), 1fr))", gap: 14, alignItems: "stretch" },
   card: {
     position: "relative", textAlign: "left", overflow: "hidden", height: "100%",
     display: "flex", flexDirection: "column", gap: 0, padding: "16px 18px",
