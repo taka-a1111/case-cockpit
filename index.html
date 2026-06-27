@@ -105,7 +105,7 @@ const PLATFORMS = {
   "直契約": "#9AA4B2",
   "その他": "#9AA4B2",
 };
-const STATUSES = ["応募中", "進行中", "納品待ち", "検収中", "完了"];
+const STATUSES = ["進行中", "相手待ち", "支払い待ち", "完了"];
 const REPLIES = ["なし", "要返信", "返信済み", "相手待ち"];
 
 const TASK_LANES = [
@@ -129,12 +129,13 @@ const REPLY_META = {
   "なし":     { color: "#616B7A", bg: "#212834", label: "—" },
 };
 const STATUS_META = {
-  "応募中":   "#9AA4B2",
   "進行中":   "#9AA4B2",
-  "納品待ち": "#9AA4B2",
-  "検収中":   "#9AA4B2",
+  "相手待ち": "#9AA4B2",
+  "支払い待ち": "#9AA4B2",
   "完了":     "#616B7A",
 };
+// 旧ステータス→新ステータスの移行マップ
+const STATUS_MIGRATE = { "応募中": "進行中", "納品待ち": "相手待ち", "検収中": "相手待ち" };
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -232,6 +233,7 @@ function laneFromDue(due) {
 function normalizeProjects(arr) {
   let list = arr.map((p) => ({
     ...p,
+    status: STATUS_MIGRATE[p.status] || p.status || "進行中",
     received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
     tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "" })),
   }));
@@ -242,6 +244,16 @@ function normalizeProjects(arr) {
 const replyTasksOf = (p) => (p.tasks || []).filter((t) => t.kind === "reply" && !t.done);
 // タスクの判定用の日付：いつやるか（start／実施日）を優先、なければ期限（due）
 const taskJudgeDate = (t) => t.start || t.due || "";
+// タスクがToDoのどのレーンに入るか：案件ステータス優先、進行中は日付で今日/明日以降
+function laneOf(project, task) {
+  if (!project) return "later";
+  if (project.status === "完了") return null;
+  if (project.status === "相手待ち") return "waiting";
+  if (project.status === "支払い待ち") return "payment";
+  const j = taskJudgeDate(task);
+  if (j) { const n = daysUntil(j); if (n !== null && n <= 0) return "today"; }
+  return "later";
+}
 // 案件の締切候補（納期＋未完了タスクの実施日/期限）を日数の配列で返す
 const dueDaysList = (p) => {
   const arr = [];
@@ -460,10 +472,19 @@ export default function App() {
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, done: !t.done } : t),
     }));
-  const changeLane = (pid, tid, lane) =>
+  const changeLane = (pid, tid, lane) => {
+    if (lane === "waiting" || lane === "payment") {
+      const status = lane === "waiting" ? "相手待ち" : "支払い待ち";
+      persist(projects.map((p) => p.id !== pid ? p : { ...p, status }));
+      return;
+    }
+    const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + (lane === "today" ? 0 : 1));
+    const start = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
     persist(projects.map((p) => p.id !== pid ? p : {
-      ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, lane } : t),
+      ...p, status: (p.status === "相手待ち" || p.status === "支払い待ち") ? "進行中" : p.status,
+      tasks: p.tasks.map((t) => t.id === tid ? { ...t, start, lane } : t),
     }));
+  };
   const changeDue = (pid, tid, due) =>
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, due } : t),
@@ -940,16 +961,9 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onDragHandle, dra
       role="button" tabIndex={0}
       onPointerDown={cardDown} onPointerMove={cardMove} onPointerUp={cardUp} onPointerCancel={cardUp}
       onClick={() => { if (editId) setEditId(null); else onOpen(p); }}>
-      {(draggable || replyN > 0) && (
+      {replyN > 0 && (
         <div style={S.cardHead}>
-          {draggable && (
-            <span style={S.cardGrip} onClick={stop} onPointerDown={(e) => { e.stopPropagation(); onDragHandle(p.id, e.currentTarget, e.pointerId); }} title="ドラッグで並び替え">
-              <GripVertical size={17} strokeWidth={2} />
-            </span>
-          )}
-          {replyN > 0 && (
-            <span style={S.cardReplyPill}><Reply size={12} strokeWidth={2.4} />要返信{replyN}</span>
-          )}
+          <span style={S.cardReplyPill}><Reply size={12} strokeWidth={2.4} />要返信{replyN}</span>
         </div>
       )}
 
@@ -1101,10 +1115,10 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onCha
   };
 
   const all = [];
-  projects.forEach((p) => p.tasks.forEach((t) => all.push({ ...t, project: p })));
-  const countOf = (lane) => all.filter((t) => (t.lane || "later") === lane && !t.done).length;
+  projects.forEach((p) => p.tasks.forEach((t) => all.push({ ...t, project: p, _lane: laneOf(p, t) })));
+  const countOf = (lane) => all.filter((t) => t._lane === lane && !t.done).length;
   const laneTasks = (lane) => all
-    .filter((t) => (t.lane || "later") === lane)
+    .filter((t) => t._lane === lane)
     .filter((t) => !(hideDone && t.done))
     .sort((a, b) => {
       if (a.done !== b.done) return a.done ? 1 : -1;
@@ -1581,7 +1595,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
 
           <div style={S.infoRow}>
             <AlignLeft size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
-            <textarea style={S.infoInput} value={d.note} placeholder="詳細" rows={1}
+            <textarea style={{ ...S.infoInput, minHeight: 48 }} value={d.note} placeholder="詳細" rows={2}
               onChange={(e) => set("note", e.target.value)} />
           </div>
 
@@ -1618,7 +1632,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
 
             <div style={S.infoRow}>
               <Reply size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
-              <textarea style={S.infoInput} value={d.received} rows={1}
+              <textarea style={{ ...S.infoInput, minHeight: 90 }} value={d.received} rows={4}
                 placeholder="届いたメッセージ"
                 onChange={(e) => set("received", e.target.value)} />
             </div>
