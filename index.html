@@ -38,7 +38,7 @@ import {
   LayoutDashboard, Briefcase, ListChecks, Plus, X, Trash2, Reply,
   Clock, CheckCircle2, Circle, AlertTriangle, Inbox, Sparkles, Copy, Check,
   CalendarDays, Coins, ExternalLink, GripVertical, Settings, ChevronLeft, ChevronRight, ListPlus, Download, Upload,
-  AlignLeft, CornerDownRight, Link2, ArrowUpDown
+  AlignLeft, CornerDownRight, Link2, ArrowUpDown, Combine
 } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0";
 
 /* ============================================================
@@ -476,6 +476,8 @@ export default function App() {
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, done: !t.done } : t),
     }));
+  const toggleProjectDone = (pid) =>
+    persist(projects.map((p) => p.id !== pid ? p : { ...p, status: p.status === "完了" ? "進行中" : "完了" }));
   const changeLane = (pid, tid, lane) => {
     if (lane === "waiting" || lane === "payment") {
       const status = lane === "waiting" ? "相手待ち" : "支払い待ち";
@@ -492,6 +494,10 @@ export default function App() {
   const changeDue = (pid, tid, due) =>
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, due } : t),
+    }));
+  const changeStart = (pid, tid, start) =>
+    persist(projects.map((p) => p.id !== pid ? p : {
+      ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, start } : t),
     }));
   const addTaskToLane = (pid, lane, title) =>
     persist(projects.map((p) => p.id !== pid ? p : {
@@ -573,8 +579,8 @@ export default function App() {
         <div style={S.viewDots}>
           {VIEWS.map((v) => <span key={v} style={{ ...S.viewDot, ...(view === v ? S.viewDotOn : {}) }} />)}
         </div>
-        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} />}
-        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onChangeLane={changeLane} onChangeDue={changeDue} onAddTask={addTaskToLane} />}
+        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} />}
+        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onAddTask={addTaskToLane} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={setEditing} />}
       </main>
 
@@ -623,7 +629,7 @@ export default function App() {
 /* ============================================================
    フォーカス（ダッシュボード）
    ============================================================ */
-function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask }) {
+function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
   const [sortMode, setSortMode] = useState("manual");
@@ -834,7 +840,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
         </div>
         {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
         <div style={S.grid}>
-          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onDragHandle={sortMode === "manual" ? startDrag : undefined} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={sortMode === "manual" ? startDrag : undefined} dragging={dragId === p.id} dragActive={dragId !== null} />)}
         </div>
       </section>
     </div>
@@ -921,7 +927,7 @@ function ProjectsView({ projects, onOpen }) {
   );
 }
 
-function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onDragHandle, dragging, dragActive }) {
+function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onToggleTask, onToggleProject, onDragHandle, dragging, dragActive }) {
   const replyN = replyTasksOf(p).length;
   const li = linkInfo(p.replyUrl);
   const dl = p.deadline ? dateLabelJP(p.deadline) : null;
@@ -970,7 +976,13 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onDra
         </div>
       )}
 
-      <div style={S.cardCompany}>{p.company}</div>
+      <div style={S.cardCompanyRow}>
+        <button style={S.cardCheck} onPointerDown={stop}
+          onClick={(e) => { stop(e); onToggleProject && onToggleProject(p.id); }} title="案件を完了">
+          <Circle size={20} color={C.ink3} strokeWidth={2} />
+        </button>
+        <span style={S.cardCompany}>{p.company}</span>
+      </div>
 
       {(dl || Number(p.reward) > 0) && (
         <div style={S.cardMetaLine}>
@@ -992,7 +1004,10 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onDra
             return (
               <div key={t.id} style={S.cardTaskRow} onPointerDown={stop}
                 onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "title"); }}>
-                <span style={S.cardTaskDot} />
+                <button style={S.cardTaskCheck} onPointerDown={stop}
+                  onClick={(e) => { stop(e); onToggleTask && onToggleTask(p.id, t.id); }} title="タスクを完了">
+                  <Circle size={18} color={C.ink3} strokeWidth={2} />
+                </button>
                 <span style={S.cardTaskTitle}>{t.title || "（無題）"}</span>
                 {lab && <span style={lab.overdue ? S.cardTaskOver : S.cardTaskDate}
                   onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "date"); }}>{lab.text}</span>}
@@ -1019,7 +1034,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onDra
 /* ============================================================
    タスクビュー（横タブ・横スワイプ切替・ポインタD&D）
    ============================================================ */
-function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onChangeDue, onAddTask }) {
+function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onChangeDue, onChangeStart, onAddTask }) {
   const [activeLane, setActiveLane] = useState("today");
   const [overTab, setOverTab] = useState(null);
   const [moveId, setMoveId] = useState(null);
@@ -1188,6 +1203,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onCha
                   dragging={dragTid === t.id}
                   moveOpen={moveId === t.id}
                   onHandlePointerDown={onHandlePointerDown}
+                  onChangeStart={(start) => onChangeStart(t.project.id, t.id, start)}
                   onChangeDue={(due) => onChangeDue(t.project.id, t.id, due)}
                   onMove={(lane) => { onChangeLane(t.project.id, t.id, lane); setMoveId(null); }} />
               ))}
@@ -1203,13 +1219,15 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onCha
   );
 }
 
-function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, dragging, moveOpen, onHandlePointerDown, onMove, onChangeDue }) {
-  const d = dueMeta(t.due);
+function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, dragging, moveOpen, onHandlePointerDown, onMove, onChangeDue, onChangeStart }) {
+  const judge = taskJudgeDate(t); // いつやる（start）優先、なければ期限（due）。レーン判定と一致させる
+  const d = dueMeta(judge);
   const [dueOpen, setDueOpen] = useState(false);
   const dStrLocal = (off) => { const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + off); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
   const quick = [
     ["今日", dStrLocal(0)], ["明日", dStrLocal(1)], ["3日後", dStrLocal(3)], ["1週間後", dStrLocal(7)], ["なし", ""],
   ];
+  const setSchedule = (val) => { onChangeStart ? onChangeStart(val) : onChangeDue(val); };
   const onDragStart = (e) => {
     try { e.dataTransfer.setData("text/plain", JSON.stringify({ pid: t.project.id, tid: t.id })); e.dataTransfer.effectAllowed = "move"; } catch {}
   };
@@ -1237,21 +1255,21 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, dragging, moveOpen, o
 
       {t.kind !== "reply" && (
         <div style={S.dueWrap}>
-          <button style={{ ...S.dueChip, color: t.due ? d.color : C.ink3, borderColor: t.due ? d.color + "44" : C.line }}
-            onClick={() => setDueOpen((v) => !v)} title="期限を変更">
-            <CalendarDays size={12} strokeWidth={2.3} />{t.due ? d.text : "期限"}
+          <button style={{ ...S.dueChip, color: judge ? d.color : C.ink3, borderColor: judge ? d.color + "44" : C.line }}
+            onClick={() => setDueOpen((v) => !v)} title="いつやるかを変更">
+            <CalendarDays size={12} strokeWidth={2.3} />{judge ? d.text : "日付"}
           </button>
           {dueOpen && (
             <>
               <div style={S.movePopScrim} onClick={() => setDueOpen(false)} />
               <div style={S.duePop}>
                 {quick.map(([label, val]) => (
-                  <button key={label} style={S.dueItem} onClick={() => { onChangeDue(val); setDueOpen(false); }}>{label}</button>
+                  <button key={label} style={S.dueItem} onClick={() => { setSchedule(val); setDueOpen(false); }}>{label}</button>
                 ))}
                 <label style={S.dueDateRow}>
                   <span style={S.dueDateLabel}>日付指定</span>
-                  <input type="date" style={S.dueDateInput} value={t.due || ""}
-                    onChange={(e) => { onChangeDue(e.target.value); setDueOpen(false); }} />
+                  <input type="date" style={S.dueDateInput} value={judge || ""}
+                    onChange={(e) => { setSchedule(e.target.value); setDueOpen(false); }} />
                 </label>
               </div>
             </>
@@ -1315,6 +1333,8 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   const [pendingDiff, setPendingDiff] = useState([]); // [{field,label,current,next,display}]
   const [genError, setGenError] = useState("");
   const [extractMsg, setExtractMsg] = useState("");
+  const [pendingTasks, setPendingTasks] = useState([]); // [{id,title,on}] 抽出された候補（確認待ち）
+  const [mergeMode, setMergeMode] = useState(false);    // 1つのタスクにまとめる
   const [copied, setCopied] = useState(false);
   const [autoSaved, setAutoSaved] = useState(false);
   const isNew = !draft.company && draft.tasks.length === 0;
@@ -1442,7 +1462,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
 
   async function extractTasks() {
     if (!d.received.trim()) { setGenError("先に相手から届いたメッセージを貼り付けてください。"); return; }
-    setExtracting(true); setGenError(""); setExtractMsg("");
+    setExtracting(true); setGenError(""); setExtractMsg(""); setPendingTasks([]); setMergeMode(false);
     try {
       const text = await callClaude({
         maxTokens: 500,
@@ -1452,25 +1472,31 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
       let arr = [];
       try { arr = JSON.parse(text.replace(/```json|```/g, "").trim()); } catch { arr = []; }
       let titles = Array.isArray(arr) ? arr.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim()) : [];
-      // 抽出結果内の重複を除去
       titles = [...new Set(titles)];
-      // 既存タスク（未完了・完了とも）と重複するものは追加しない
-      const norm = (s) => s.replace(/\s+/g, "").replace(/[。、，．,.]/g, "");
-      const existing = new Set(d.tasks.map((t) => norm(t.title)));
-      const fresh = titles.filter((t) => !existing.has(norm(t)));
-      const dup = titles.length - fresh.length;
-      if (fresh.length) {
-        const newTasks = fresh.map((title) => ({ id: uid(), title, done: false, due: "", start: "", lane: "today", kind: "task" }));
-        set("tasks", [...d.tasks, ...newTasks]);
-        setExtractMsg(`${fresh.length}件のタスクを追加しました（「今日」レーン）。${dup ? `既存と重複の${dup}件は追加しませんでした。` : ""}`);
-      } else if (titles.length) {
-        setExtractMsg("抽出されたタスクはすべて追加済みでした。");
-      } else {
-        setExtractMsg("対応が必要なタスクは見つかりませんでした。");
-      }
+      if (!titles.length) { setExtractMsg("対応が必要なタスクは見つかりませんでした。"); return; }
+      // 即登録せず、確認用の候補としてセット（既定はすべて「反映」ON）
+      setPendingTasks(titles.map((title) => ({ id: uid(), title, on: true })));
     } catch {
       setGenError("タスク抽出に失敗しました。通信状況・APIキー設定をご確認ください。");
     } finally { setExtracting(false); }
+  }
+  // 抽出候補の操作
+  const togglePending = (id) => setPendingTasks((list) => list.map((t) => t.id === id ? { ...t, on: !t.on } : t));
+  const editPending = (id, title) => setPendingTasks((list) => list.map((t) => t.id === id ? { ...t, title } : t));
+  const cancelPending = () => { setPendingTasks([]); setMergeMode(false); };
+  // 「反映」する候補を実際にタスクへ登録
+  function applyPending() {
+    const chosen = pendingTasks.filter((t) => t.on && t.title.trim()).map((t) => t.title.trim());
+    if (!chosen.length) { cancelPending(); return; }
+    let newTasks;
+    if (mergeMode) {
+      newTasks = [{ id: uid(), title: chosen.join("／"), done: false, due: "", start: "", lane: "today", kind: "task" }];
+    } else {
+      newTasks = chosen.map((title) => ({ id: uid(), title, done: false, due: "", start: "", lane: "today", kind: "task" }));
+    }
+    set("tasks", [...d.tasks, ...newTasks]);
+    setExtractMsg(mergeMode ? "1件のタスクにまとめて登録しました。" : `${newTasks.length}件のタスクを登録しました。`);
+    cancelPending();
   }
 
   function copyReply() {
@@ -1648,6 +1674,34 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
             </div>
             {extractMsg && <div style={S.extractMsg}>{extractMsg}</div>}
             {genError && <div style={S.genError}>{genError}</div>}
+
+            {pendingTasks.length > 0 && (
+              <div style={S.pendingBox}>
+                <div style={S.pendingHead}>
+                  <span style={S.pendingTitle}>抽出されたタスク（{pendingTasks.filter((t) => t.on).length}/{pendingTasks.length}）</span>
+                  <button style={{ ...S.mergeToggle, ...(mergeMode ? S.mergeToggleOn : {}) }} onClick={() => setMergeMode((v) => !v)}>
+                    <Combine size={13} strokeWidth={2.4} />1つにまとめる
+                  </button>
+                </div>
+                <div style={S.pendingList}>
+                  {pendingTasks.map((t) => (
+                    <div key={t.id} style={S.pendingRow}>
+                      <button style={S.pendingCheck} onClick={() => togglePending(t.id)} title={t.on ? "反映する" : "無視する"}>
+                        {t.on ? <CheckCircle2 size={18} color={C.accent} strokeWidth={2.4} /> : <Circle size={18} color="#3A434F" />}
+                      </button>
+                      <input style={{ ...S.pendingInput, ...(t.on ? {} : S.pendingInputOff) }} value={t.title}
+                        onChange={(e) => editPending(t.id, e.target.value)} />
+                    </div>
+                  ))}
+                </div>
+                <div style={S.pendingFoot}>
+                  <button style={S.pendingCancel} onClick={cancelPending}>キャンセル</button>
+                  <button style={S.pendingApply} onClick={applyPending}>
+                    <Plus size={14} strokeWidth={2.6} />{mergeMode ? "まとめて登録" : `${pendingTasks.filter((t) => t.on).length}件を登録`}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {d.replyDraft && (
               <div style={S.replyResult}>
@@ -1988,7 +2042,6 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
         </div>
         <div style={S.taskSheetBody}>
           <input style={S.titleInput} value={task.title} placeholder="やること"
-            autoFocus={focus === "title"}
             onChange={(e) => onUpdate({ title: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); onClose(); } }} />
           <div style={S.infoRow}>
@@ -2291,7 +2344,9 @@ const S = {
   cardStatus: { display: "none" },
   cardReplyPill: { display: "inline-flex", alignItems: "center", gap: 3, fontSize: 13.5, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.15)", padding: "3px 9px", borderRadius: 7, marginLeft: "auto" },
   statusDot: { display: "none" },
-  cardCompany: { fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, lineHeight: 1.3, marginBottom: 8 },
+  cardCompanyRow: { display: "flex", alignItems: "center", gap: 12, marginBottom: 8 },
+  cardCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
+  cardCompany: { flex: 1, minWidth: 0, fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, lineHeight: 1.3 },
   cardWork: { display: "none" },
   cardMetaLine: { display: "flex", alignItems: "baseline", gap: 10 },
   cardDeadlineSub: { position: "relative", fontSize: 14.5, color: C.ink2, fontWeight: 600, cursor: "pointer" },
@@ -2309,7 +2364,8 @@ const S = {
   cardDue: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
   cardDueNone: { display: "none" },
   cardTaskList: { display: "flex", flexDirection: "column", gap: 10, marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.line}` },
-  cardTaskRow: { display: "flex", alignItems: "center", gap: 10, cursor: "pointer" },
+  cardTaskRow: { display: "flex", alignItems: "center", gap: 12, cursor: "pointer" },
+  cardTaskCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
   cardTaskEdit: { display: "flex", flexDirection: "column", gap: 8, padding: "10px 11px", background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 10 },
   cardTaskEditInput: { width: "100%", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 10px", fontSize: 15, color: C.ink },
   cardTaskEditDates: { display: "flex", alignItems: "flex-end", gap: 8 },
@@ -2345,16 +2401,16 @@ const S = {
   /* drawer */
   scrim: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 40 },
   taskSheet: {
-    position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 50,
-    background: C.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    borderTop: `1px solid ${C.line}`, boxShadow: "0 -12px 40px rgba(0,0,0,0.5)",
+    position: "fixed", left: 0, right: 0, top: 0, zIndex: 50,
+    background: C.bg, borderBottomLeftRadius: 20, borderBottomRightRadius: 20,
+    borderBottom: `1px solid ${C.line}`, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
     display: "flex", flexDirection: "column", maxWidth: 620, marginLeft: "auto", marginRight: "auto",
-    maxHeight: "85vh",
+    maxHeight: "90vh", paddingTop: "env(safe-area-inset-top, 0px)",
   },
   taskSheetHead: { display: "flex", alignItems: "center", gap: 10, padding: "14px 16px 6px" },
   taskSheetProject: { flex: 1, fontSize: 14, color: C.ink3, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   taskSheetBody: { padding: "4px 18px 8px", display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" },
-  taskSheetFoot: { display: "flex", alignItems: "center", gap: 8, padding: "12px 18px", paddingBottom: "calc(16px + env(safe-area-inset-bottom, 0px))", borderTop: `1px solid ${C.line}` },
+  taskSheetFoot: { display: "flex", alignItems: "center", gap: 8, padding: "12px 18px 16px", borderTop: `1px solid ${C.line}` },
   taskDoneBtn: { display: "inline-flex", alignItems: "center", gap: 6, border: "none", background: C.accent, color: "#fff", borderRadius: 10, padding: "10px 16px", fontSize: 14.5, fontWeight: 700 },
   drawer: {
     position: "fixed", top: 0, right: 0, bottom: 0, width: "min(620px, 100vw)", zIndex: 50,
@@ -2506,6 +2562,19 @@ const S = {
   extractBtn: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, border: `1px solid ${C.line}`, background: C.panel, color: C.ink, borderRadius: 9, padding: "10px 12px", fontSize: 14.5, fontWeight: 700 },
   spinnerDark: { width: 13, height: 13, border: "2px solid rgba(24,27,34,0.25)", borderTopColor: C.ink, borderRadius: "50%", display: "inline-block", animation: "spin 0.7s linear infinite" },
   extractMsg: { fontSize: 14, color: "#51CF66", background: "rgba(81,207,102,0.15)", border: "1px solid #2E5E3F", borderRadius: 8, padding: "8px 10px" },
+  pendingBox: { border: `1px solid ${C.line}`, background: C.panel, borderRadius: 12, padding: 12, display: "flex", flexDirection: "column", gap: 10 },
+  pendingHead: { display: "flex", alignItems: "center", gap: 8 },
+  pendingTitle: { flex: 1, fontSize: 13.5, fontWeight: 700, color: C.ink2 },
+  mergeToggle: { display: "inline-flex", alignItems: "center", gap: 5, border: `1px solid ${C.line}`, background: "transparent", color: C.ink2, borderRadius: 8, padding: "5px 9px", fontSize: 13, fontWeight: 700 },
+  mergeToggleOn: { borderColor: C.accent, color: C.accent, background: "rgba(107,138,255,0.13)" },
+  pendingList: { display: "flex", flexDirection: "column", gap: 6 },
+  pendingRow: { display: "flex", alignItems: "center", gap: 9 },
+  pendingCheck: { border: "none", background: "transparent", padding: 2, display: "flex", flexShrink: 0, cursor: "pointer" },
+  pendingInput: { flex: 1, border: `1px solid ${C.line}`, background: C.bg, color: C.ink, borderRadius: 8, padding: "8px 10px", fontSize: 14.5, fontFamily: "inherit" },
+  pendingInputOff: { opacity: 0.4, textDecoration: "line-through" },
+  pendingFoot: { display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" },
+  pendingCancel: { border: "none", background: "transparent", color: C.ink2, fontSize: 14, fontWeight: 700, padding: "8px 10px" },
+  pendingApply: { display: "inline-flex", alignItems: "center", gap: 5, border: "none", background: C.accent, color: "#fff", borderRadius: 9, padding: "9px 14px", fontSize: 14.5, fontWeight: 700 },
 
   /* settings modal */
   modal: { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 50, width: "min(440px, 92vw)", background: C.bg, borderRadius: 16, boxShadow: "0 24px 60px rgba(20,24,40,0.3)", overflow: "hidden" },
