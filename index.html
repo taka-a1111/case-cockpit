@@ -54,21 +54,28 @@ const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 // CORSプリフライトを避けるため POST は text/plain で送る。
 async function gasGet({ url, token }) {
   const u = url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) + "&_=" + Date.now();
-  const res = await fetch(u, { method: "GET" });
-  if (!res.ok) throw new Error("GET " + res.status);
-  const j = await res.json();
-  if (j && j.ok === false) throw new Error(j.error || "認証エラー");
+  let res;
+  try { res = await fetch(u, { method: "GET", redirect: "follow" }); }
+  catch (e) { throw new Error("接続できません。URLが正しいか、デプロイのアクセス権が『全員』か確認してください"); }
+  const txt = await res.text();
+  if (txt.trim().startsWith("<")) throw new Error("認証ページが返りました。デプロイのアクセス権を『全員』にし、URLが /exec で終わっているか確認してください");
+  let j; try { j = JSON.parse(txt); } catch { throw new Error("応答を解析できません。URL末尾が /exec か確認してください"); }
+  if (j && j.ok === false) throw new Error(j.error || "認証エラー（同期キーを確認してください）");
   return Array.isArray(j) ? j : (j && j.data) ? j.data : null;
 }
 async function gasPost({ url, token }, data) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ token, data }),
-  });
-  if (!res.ok) throw new Error("POST " + res.status);
-  const j = await res.json().catch(() => ({}));
-  if (j && j.ok === false) throw new Error(j.error || "認証エラー");
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST", redirect: "follow",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ token, data }),
+    });
+  } catch (e) { throw new Error("接続できません。URLが正しいか、デプロイのアクセス権が『全員』か確認してください"); }
+  const txt = await res.text();
+  if (txt.trim().startsWith("<")) throw new Error("認証ページが返りました。デプロイのアクセス権を『全員』にし、URLが /exec で終わっているか確認してください");
+  let j; try { j = JSON.parse(txt); } catch { throw new Error("応答を解析できません。URL末尾が /exec か確認してください"); }
+  if (j && j.ok === false) throw new Error(j.error || "認証エラー（同期キーを確認してください）");
   return true;
 }
 
