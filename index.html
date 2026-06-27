@@ -303,6 +303,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("focus");
   const [navStack, setNavStack] = useState([]); // 画面遷移の履歴（戻る用）
+  const [activeLane, setActiveLane] = useState("today"); // タスク画面のレーン（上部スワイプで切替）
   const VIEWS = ["focus", "tasks", "calendar"];
   useEffect(() => { try { window.scrollTo(0, 0); const m = document.querySelector("main"); if (m) m.scrollTop = 0; } catch {} }, [view]);
   const go = (v) => { if (v !== view) { setNavStack((s) => [...s, view]); setView(v); } };
@@ -312,13 +313,21 @@ export default function App() {
   const onMainTouchStart = (e) => { const t = e.touches[0]; navSwipe.current = { x: t.clientX, y: t.clientY }; };
   const onMainTouchEnd = (e) => {
     const t = e.changedTouches && e.changedTouches[0]; if (!t) return;
-    const sx = navSwipe.current.x;
+    const sx = navSwipe.current.x, sy = navSwipe.current.y;
     if (sx <= EDGE || sx >= winW() - EDGE) return; // 端から始まったスワイプは「戻る」に任せる
     const dx = t.clientX - navSwipe.current.x, dy = t.clientY - navSwipe.current.y;
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      const i = VIEWS.indexOf(view);
-      if (dx < 0 && i < VIEWS.length - 1) go(VIEWS[i + 1]);
-      else if (dx > 0 && i > 0) go(VIEWS[i - 1]);
+      const H = (typeof window !== "undefined" ? window.innerHeight : 800);
+      const topZone = sy < H * 0.45; // 画面上部＝レーン切替、下部＝ビュー切替
+      if (view === "tasks" && topZone) {
+        const idx = TASK_LANES.findIndex((L) => L.key === activeLane);
+        if (dx < 0 && idx < TASK_LANES.length - 1) setActiveLane(TASK_LANES[idx + 1].key);
+        else if (dx > 0 && idx > 0) setActiveLane(TASK_LANES[idx - 1].key);
+      } else {
+        const i = VIEWS.indexOf(view);
+        if (dx < 0 && i < VIEWS.length - 1) go(VIEWS[i + 1]);
+        else if (dx > 0 && i > 0) go(VIEWS[i - 1]);
+      }
     }
   };
   const [editing, setEditing] = useState(null); // draft object or null
@@ -330,31 +339,34 @@ export default function App() {
   const removeTaskFromProject = (pid, tid) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, tasks: p.tasks.filter((t) => t.id !== tid) }));
 
-  // 「戻る」：開いているオーバーレイを閉じる → なければ前の画面へ
-  const goBack = () => {
-    if (confirmDel) { setConfirmDel(null); return; }
-    if (editTask) { setEditTask(null); return; }
-    if (showSettings) { setShowSettings(false); return; }
-    if (editing) { setEditing(null); setFocusTaskId(null); return; }
-    setNavStack((s) => { if (!s.length) return s; setView(s[s.length - 1]); return s.slice(0, -1); });
+  // 開いているオーバーレイ／画面を1つ閉じる（実体）。閉じたら true
+  const depth = (editing ? 1 : 0) + (showSettings ? 1 : 0) + (editTask ? 1 : 0) + navStack.length;
+  const depthRef = useRef(0); depthRef.current = depth;
+  const closeOneRef = useRef(() => false);
+  closeOneRef.current = () => {
+    if (editTask) { setEditTask(null); return true; }
+    if (showSettings) { setShowSettings(false); return true; }
+    if (editing) { setEditing(null); setFocusTaskId(null); setConfirmDel(null); return true; }
+    if (navStack.length) { setNavStack((s) => { setView(s[s.length - 1]); return s.slice(0, -1); }); return true; }
+    return false;
   };
-  // 画面端から内側へのスワイプで「戻る」
-  const edgeRef = useRef(null);
-  const onRootTouchStart = (e) => {
-    const t = e.touches[0]; if (!t) { edgeRef.current = null; return; }
-    const w = winW(), fromLeft = t.clientX <= EDGE, fromRight = t.clientX >= w - EDGE;
-    edgeRef.current = (fromLeft || fromRight) ? { x: t.clientX, y: t.clientY, side: fromLeft ? "L" : "R" } : null;
-  };
-  const onRootTouchEnd = (e) => {
-    if (!edgeRef.current) return;
-    const t = e.changedTouches && e.changedTouches[0];
-    if (!t) { edgeRef.current = null; return; }
-    const dx = t.clientX - edgeRef.current.x, dy = t.clientY - edgeRef.current.y;
-    const horiz = Math.abs(dx) > 64 && Math.abs(dx) > Math.abs(dy) * 1.4;
-    const inward = (edgeRef.current.side === "L" && dx > 0) || (edgeRef.current.side === "R" && dx < 0);
-    edgeRef.current = null;
-    if (horiz && inward) goBack();
-  };
+  // オーバーレイ／画面を開いた分だけブラウザ履歴にダミーを積む。
+  // → 画面端スワイプ（＝ブラウザの「戻る」）が popstate になり、アプリ内で1段戻れる（アプリは消えない）
+  const trap = useRef(0);
+  useEffect(() => {
+    while (trap.current < depth) { try { window.history.pushState({ helm: 1 }, ""); } catch {} trap.current++; }
+    if (trap.current > depth) trap.current = depth;
+  }, [depth]);
+  useEffect(() => {
+    const onPop = () => {
+      if (depthRef.current > 0) { trap.current = depthRef.current - 1; closeOneRef.current(); }
+      else { trap.current = 0; }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  // UIの「閉じる／戻る」ボタンやスクリムから呼ぶ：履歴も1つ戻して状態と同期させる
+  const goBack = () => { if (trap.current > 0) { try { window.history.back(); } catch { closeOneRef.current(); } } else { closeOneRef.current(); } };
 
   /* ---- 同期設定・状態 ---- */
   const [sync, setSync] = useState({ url: "", token: "", on: false });
@@ -471,7 +483,7 @@ export default function App() {
       return next;
     });
   };
-  const removeProject = (id) => { persist(projects.filter((p) => p.id !== id)); setConfirmDel(null); setEditing(null); };
+  const removeProject = (id) => { persist(projects.filter((p) => p.id !== id)); setConfirmDel(null); goBack(); };
   const toggleTask = (pid, tid) =>
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, done: !t.done } : t),
@@ -548,7 +560,7 @@ export default function App() {
   );
 
   return (
-    <div style={S.shell} onTouchStart={onRootTouchStart} onTouchEnd={onRootTouchEnd}>
+    <div style={S.shell}>
       <Fonts />
 
       {/* ===== Header ===== */}
@@ -576,15 +588,12 @@ export default function App() {
 
       {/* ===== Body ===== */}
       <main style={S.main} onTouchStart={onMainTouchStart} onTouchEnd={onMainTouchEnd}>
-        <div style={S.viewDots}>
-          {VIEWS.map((v) => <span key={v} style={{ ...S.viewDot, ...(view === v ? S.viewDotOn : {}) }} />)}
-        </div>
         {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} />}
-        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onAddTask={addTaskToLane} />}
+        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onAddTask={addTaskToLane} activeLane={activeLane} setActiveLane={setActiveLane} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={setEditing} />}
       </main>
 
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)}
+      {showSettings && <SettingsModal onClose={goBack}
         sync={sync} syncState={syncState} onSaveSync={saveSync} onSyncPush={syncPush} onSyncPull={syncPull} />}
 
       {/* ===== Drawer ===== */}
@@ -592,7 +601,7 @@ export default function App() {
         <Drawer
           draft={editing}
           focusTaskId={focusTaskId}
-          onClose={() => { setEditing(null); setFocusTaskId(null); }}
+          onClose={goBack}
           onSave={saveProject}
           onAutoSave={saveProjectQuiet}
           onDelete={(id) => setConfirmDel(id)}
@@ -609,10 +618,10 @@ export default function App() {
         if (!p || !t) return null;
         return (
           <SubtaskSheet project={p} task={t} focus={editTask.focus}
-            onClose={() => setEditTask(null)}
+            onClose={goBack}
             onUpdate={(patch) => updateTask(editTask.pid, editTask.tid, patch)}
-            onToggle={() => { toggleTask(editTask.pid, editTask.tid); setEditTask(null); }}
-            onDelete={() => { removeTaskFromProject(editTask.pid, editTask.tid); setEditTask(null); }} />
+            onToggle={() => { toggleTask(editTask.pid, editTask.tid); goBack(); }}
+            onDelete={() => { removeTaskFromProject(editTask.pid, editTask.tid); goBack(); }} />
         );
       })()}
 
@@ -1034,8 +1043,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
 /* ============================================================
    タスクビュー（横タブ・横スワイプ切替・ポインタD&D）
    ============================================================ */
-function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onChangeDue, onChangeStart, onAddTask }) {
-  const [activeLane, setActiveLane] = useState("today");
+function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onChangeDue, onChangeStart, onAddTask, activeLane, setActiveLane }) {
   const [overTab, setOverTab] = useState(null);
   const [moveId, setMoveId] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -1098,23 +1106,6 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onCha
   const onHandlePointerDown = (e, t) => {
     e.preventDefault(); e.stopPropagation();
     pendRef.current = { pid: t.project.id, tid: t.id, lane: activeLaneRef.current, x: e.clientX, y: e.clientY, title: t.title };
-  };
-
-  // コンテンツ横スワイプでタブ移動
-  const onTouchStart = (e) => {
-    if (draggingRef.current) { swipeRef.current = null; return; }
-    const tt = e.touches[0]; swipeRef.current = { x: tt.clientX, y: tt.clientY };
-  };
-  const onTouchEnd = (e) => {
-    if (draggingRef.current || !swipeRef.current) { swipeRef.current = null; return; }
-    const tt = e.changedTouches[0];
-    const dx = tt.clientX - swipeRef.current.x, dy = tt.clientY - swipeRef.current.y;
-    swipeRef.current = null;
-    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.4) {
-      const idx = TASK_LANES.findIndex((L) => L.key === activeLane);
-      if (dx < 0 && idx < TASK_LANES.length - 1) setActiveLane(TASK_LANES[idx + 1].key);
-      if (dx > 0 && idx > 0) setActiveLane(TASK_LANES[idx - 1].key);
-    }
   };
 
   const all = [];
