@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>案件コックピット</title>
+<title>Helm — 案件管理</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap');
 * { box-sizing: border-box; }
@@ -93,8 +93,8 @@ const dStr = (offset = 0) => {
   const d = new Date(TODAY); d.setDate(d.getDate() + offset);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
-// 返信タスク（当日期限）
-const reply = (title) => ({ id: uid(), title, done: false, due: dStr(0), lane: "today", kind: "reply" });
+// 返信タスク（当日期限）。msg はクライアントから届いた原文をそのまま保持
+const reply = (title, msg = "") => ({ id: uid(), title, done: false, due: dStr(0), lane: "today", kind: "reply", msg });
 const task = (title, offset, lane = "today", done = false) => ({ id: uid(), title, done, due: offset == null ? "" : dStr(offset), lane, kind: "task" });
 
 function makeSample() {
@@ -108,7 +108,7 @@ function makeSample() {
       replyDraft: "", repliedAt: null,
       replyUrl: "https://www.chatwork.com/",
       tasks: [
-        reply("見積りと対応期間を返信"),
+        reply("見積りと対応期間を返信", "お世話になっております。先日ご提案いただいたトップページ改装の件、社内で前向きに検討しております。改めてお見積りと、対応にかかる期間の目安を教えていただけますでしょうか。あわせて、商品ページの修正分は今週中に反映可能でしょうか。"),
         task("トップページ改装の構成案を作成", 3, "today"),
         task("商品ページのデザイン修正", null, "later", true),
       ],
@@ -123,8 +123,8 @@ function makeSample() {
       replyDraft: "", repliedAt: null,
       replyUrl: "https://crowdworks.jp/mypage/messages",
       tasks: [
-        reply("画像の利用許諾の可否を返信"),
-        reply("公開予定日の候補を返信"),
+        reply("画像の利用許諾の可否を返信", "サイトに掲載する子どもの写真について、保護者の許諾はこちらで取得すべきでしょうか。掲載範囲とあわせてご確認いただけますと幸いです。"),
+        reply("公開予定日の候補を返信", "（別トーク）公開予定日についても、候補日をいくつかご提示いただけますでしょうか。"),
         task("クライアント支給素材の反映", null, "later", true),
         task("WordPress本番環境へ移行", 4, "today"),
       ],
@@ -139,7 +139,7 @@ function makeSample() {
       replyDraft: "", repliedAt: null,
       replyUrl: "https://www.chatwork.com/",
       tasks: [
-        reply("テーマ確認と記事修正の件に返信"),
+        reply("テーマ確認と記事修正の件に返信", "２点ご連絡です。①次回のnote記事のテーマは「狭小住宅の収納術」で進めていただけますか。②前回の楽天記事、見出しを2つ追加でご対応お願いできますか。お手すきにご返信ください。"),
         task("note記事を2本執筆", 2, "today"),
         task("楽天ブログ記事を1本執筆", 5, "later"),
       ],
@@ -166,8 +166,8 @@ function makeSample() {
       replyDraft: "", repliedAt: null,
       replyUrl: "https://www.chatwork.com/",
       tasks: [
-        reply("配色の相談に返信"),
-        reply("追加デモの見積り依頼に返信"),
+        reply("配色の相談に返信", "LP初稿を拝見しました。ファーストビューの配色について何点かご相談したく、ご返信いただけますと幸いです。"),
+        reply("追加デモの見積り依頼に返信", "（別トーク）日本超特価部品のデモサイトについて、別ページの追加分のお見積りをお願いできますでしょうか。"),
         task("PhotoIUPAC 2028 LPのデザイン調整", 3, "today"),
         task("日本超特価部品デモの修正", 6, "later"),
       ],
@@ -195,8 +195,8 @@ function makeSample() {
       replyDraft: "", repliedAt: null,
       replyUrl: "https://www.chatwork.com/",
       tasks: [
-        reply("テスト結果の所感を返信"),
-        reply("文面テンプレートの相談に返信"),
+        reply("テスト結果の所感を返信", "テスト版をお試しいただきありがとうございます。検知のタイミングについて1点ご確認させてください。ご都合よいときにご返信ください。"),
+        reply("文面テンプレートの相談に返信", "（別トーク）リマインダーの文面テンプレートについてもご相談したく、ご返信ください。"),
         task("GASリマインダーの動作テスト", 2, "today"),
       ],
       createdAt: Date.now(),
@@ -214,8 +214,8 @@ function makeSample() {
       createdAt: Date.now(),
     },
     {
-      id: uid(), company: "案件コックピット（このアプリ）", platform: "その他",
-      work: "案件・タスク管理ダッシュボード", reward: 0,
+      id: uid(), company: "Helm（このアプリ）", platform: "その他",
+      work: "案件・タスク・返信を一元管理", reward: 0,
       status: "進行中", reply: "なし", deadline: "",
       note: "Claudeで開発中。Vercelに公開予定。",
       received: "", replyDraft: "", repliedAt: null, replyUrl: "",
@@ -295,7 +295,7 @@ function normalizeProjects(arr) {
   let list = arr.map((p) => ({
     ...p,
     received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [],
-    tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task" })),
+    tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "" })),
   }));
   if (!list.some((p) => p.id === INBOX_ID)) list = [...list, makeInbox()];
   return list;
@@ -369,6 +369,10 @@ export default function App() {
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, lane } : t),
     }));
+  const changeDue = (pid, tid, due) =>
+    persist(projects.map((p) => p.id !== pid ? p : {
+      ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, due } : t),
+    }));
   const addTaskToLane = (pid, lane, title) =>
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: [...p.tasks, { id: uid(), title, done: false, due: "", lane, kind: "task" }],
@@ -398,9 +402,9 @@ export default function App() {
       {/* ===== Header ===== */}
       <header style={S.header}>
         <div style={S.brand}>
-          <div style={S.brandMark}>◆</div>
+          <div style={S.brandMark}>H</div>
           <div>
-            <div style={S.brandTitle}>案件コックピット</div>
+            <div style={S.brandTitle}>Helm</div>
             <div style={S.brandSub}>{active.length}件 進行中 · {kpi.needReply}件 要返信</div>
           </div>
         </div>
@@ -417,11 +421,11 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <button style={S.iconBtnHeader} onClick={() => setShowSettings(true)} title="設定（APIキー）">
+        <button style={S.iconBtnHeader} onClick={() => setShowSettings(true)} title="設定（APIキー）" aria-label="設定">
           <Settings size={18} strokeWidth={2} />
         </button>
-        <button style={S.addBtn} onClick={() => setEditing(blankDraft())}>
-          <Plus size={16} strokeWidth={2.6} /> <span style={S.addLabel}>案件を追加</span>
+        <button style={S.addBtnIcon} onClick={() => setEditing(blankDraft())} title="案件を追加" aria-label="案件を追加">
+          <Plus size={20} strokeWidth={2.6} />
         </button>
       </header>
 
@@ -429,7 +433,7 @@ export default function App() {
       <main style={S.main}>
         {view === "focus" && <FocusView kpi={kpi} projects={active} onOpen={setEditing} />}
         {view === "projects" && <ProjectsView projects={projects} onOpen={setEditing} />}
-        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onChangeLane={changeLane} onAddTask={addTaskToLane} />}
+        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onChangeLane={changeLane} onChangeDue={changeDue} onAddTask={addTaskToLane} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={setEditing} />}
       </main>
 
@@ -456,6 +460,7 @@ export default function App() {
    ============================================================ */
 function FocusView({ kpi, projects, onOpen }) {
   const [openCard, setOpenCard] = useState(null);
+  const [openMsg, setOpenMsg] = useState(null);
 
   // 返信タスク（案件ごと複数あり得る）
   const replyEntries = projects.flatMap((p) => replyTasksOf(p).map((t) => ({ p, t })));
@@ -521,21 +526,37 @@ function FocusView({ kpi, projects, onOpen }) {
           {panelList.length === 0 && <div style={S.replyPanelEmpty}>該当する項目はありません。</div>}
 
           {openCard === "reply" && replyEntries.map(({ p, t }) => (
-            <div key={t.id} style={S.replyItem}>
-              <button style={S.replyItemMain} onClick={() => onOpen(p)}>
-                <PlatformChip name={p.platform} small />
-                <span style={S.replyItemCol}>
-                  <span style={S.replyItemName}>{p.company}</span>
-                  <span style={S.replyItemSub}>{t.title}</span>
-                </span>
-                <span style={{ ...S.replyItemDue, color: "#FF922B" }}>本日中</span>
-              </button>
-              {p.replyUrl && (() => { const li = linkInfo(p.replyUrl); return (
-                <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
-                  style={{ ...S.replyItemLink, color: li.color, background: li.color + "22" }} title={li.label}>
-                  <ExternalLink size={13} strokeWidth={2.4} />{li.short}
-                </a>
-              ); })()}
+            <div key={t.id} style={S.replyItemWrap}>
+              <div style={S.replyItem}>
+                <button style={S.replyItemMain} onClick={() => setOpenMsg(openMsg === t.id ? null : t.id)}>
+                  <PlatformChip name={p.platform} small />
+                  <span style={S.replyItemCol}>
+                    <span style={S.replyItemName}>{p.company}</span>
+                    <span style={S.replyItemSub}>{t.title}</span>
+                  </span>
+                  <span style={{ ...S.replyItemDue, color: "#FF922B" }}>本日中</span>
+                </button>
+                {p.replyUrl && (() => { const li = linkInfo(p.replyUrl); return (
+                  <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
+                    style={{ ...S.replyItemLink, color: li.color, background: li.color + "22" }} title={li.label}>
+                    <ExternalLink size={13} strokeWidth={2.4} />{li.short}
+                  </a>
+                ); })()}
+              </div>
+              {t.msg && (
+                <button style={S.msgToggle} onClick={() => setOpenMsg(openMsg === t.id ? null : t.id)}>
+                  <ChevronRight size={13} strokeWidth={2.4}
+                    style={{ transform: openMsg === t.id ? "rotate(90deg)" : "none", transition: "transform 0.12s" }} />
+                  {openMsg === t.id ? "元のメッセージを閉じる" : "届いたメッセージを見る"}
+                </button>
+              )}
+              {openMsg === t.id && t.msg && (
+                <div style={S.msgQuote}>
+                  <span style={S.msgQuoteLabel}>{p.company} からの原文</span>
+                  <div style={S.msgQuoteText}>{t.msg}</div>
+                  <button style={S.msgOpenProject} onClick={() => onOpen(p)}>この案件を開いて返信する →</button>
+                </div>
+              )}
             </div>
           ))}
 
@@ -545,16 +566,25 @@ function FocusView({ kpi, projects, onOpen }) {
               <div key={p.id} style={S.replyItem}>
                 <button style={S.replyItemMain} onClick={() => onOpen(p)}>
                   <PlatformChip name={p.platform} small />
-                  <span style={S.replyItemName}>{p.company}</span>
+                  <span style={S.replyItemCol}>
+                    <span style={S.replyItemName}>{p.company}</span>
+                    {openCard === "progress" && (
+                      <span style={S.replyItemMetaRow}>
+                        <span style={S.replyItemReward}>{yen(Number(p.reward))}</span>
+                        <span style={{ ...S.replyItemDueSub, color: dm.color }}>{dm.text}</span>
+                      </span>
+                    )}
+                  </span>
                   {(openCard === "weekDue" || openCard === "overdue") && p.deadline && (
                     <span style={{ ...S.replyItemDue, color: dm.color }}>{dm.n < 0 ? `${-dm.n}日超過` : dm.n === 0 ? "今日" : `あと${dm.n}日`}</span>
                   )}
                 </button>
-                {p.replyUrl && (
-                  <a href={p.replyUrl} target="_blank" rel="noopener noreferrer" style={S.replyItemLink}>
-                    <ExternalLink size={13} strokeWidth={2.4} />開く
+                {p.replyUrl && (() => { const li = linkInfo(p.replyUrl); return (
+                  <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
+                    style={{ ...S.replyItemLink, color: li.color, background: li.color + "22" }} title={li.label}>
+                    <ExternalLink size={13} strokeWidth={2.4} />{li.short}
                   </a>
-                )}
+                ); })()}
               </div>
             );
           })}
@@ -706,7 +736,7 @@ function ProjectCard({ p, onOpen }) {
 /* ============================================================
    タスクビュー（横タブ・横スワイプ切替・ポインタD&D）
    ============================================================ */
-function TasksView({ projects, onToggle, onOpen, onChangeLane, onAddTask }) {
+function TasksView({ projects, onToggle, onOpen, onChangeLane, onChangeDue, onAddTask }) {
   const [activeLane, setActiveLane] = useState("today");
   const [overTab, setOverTab] = useState(null);
   const [moveId, setMoveId] = useState(null);
@@ -824,7 +854,14 @@ function TasksView({ projects, onToggle, onOpen, onChangeLane, onAddTask }) {
           return (
             <button key={L.key} data-lane={L.key}
               style={{ ...S.taskTab, ...(active ? S.taskTabOn : {}), ...(over ? { background: L.tint } : {}) }}
-              onClick={() => setActiveLane(L.key)}>
+              onClick={() => setActiveLane(L.key)}
+              onDragOver={(e) => { e.preventDefault(); if (overTab !== L.key) setOverTab(L.key); }}
+              onDragLeave={() => setOverTab((o) => (o === L.key ? null : o))}
+              onDrop={(e) => {
+                e.preventDefault();
+                try { const d = JSON.parse(e.dataTransfer.getData("text/plain")); if (d && d.tid) onChangeLane(d.pid, d.tid, L.key); } catch {}
+                setOverTab(null);
+              }}>
               <span style={{ ...S.taskTabDot, background: L.color, opacity: active ? 1 : 0.5 }} />
               <span>{L.label}</span>
               <span style={{ ...S.taskTabCount, ...(active ? { background: L.color, color: "#fff" } : {}) }}>{countOf(L.key)}</span>
@@ -869,6 +906,7 @@ function TasksView({ projects, onToggle, onOpen, onChangeLane, onAddTask }) {
                   dragging={dragTid === t.id}
                   moveOpen={moveId === t.id}
                   onHandlePointerDown={onHandlePointerDown}
+                  onChangeDue={(due) => onChangeDue(t.project.id, t.id, due)}
                   onMove={(lane) => { onChangeLane(t.project.id, t.id, lane); setMoveId(null); }} />
               ))}
             </div>
@@ -883,10 +921,19 @@ function TasksView({ projects, onToggle, onOpen, onChangeLane, onAddTask }) {
   );
 }
 
-function TaskCard({ t, lane, onToggle, onOpen, dragging, moveOpen, onHandlePointerDown, onMove }) {
+function TaskCard({ t, lane, onToggle, onOpen, dragging, moveOpen, onHandlePointerDown, onMove, onChangeDue }) {
   const d = dueMeta(t.due);
+  const [dueOpen, setDueOpen] = useState(false);
+  const dStrLocal = (off) => { const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + off); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
+  const quick = [
+    ["今日", dStrLocal(0)], ["明日", dStrLocal(1)], ["3日後", dStrLocal(3)], ["1週間後", dStrLocal(7)], ["なし", ""],
+  ];
+  const onDragStart = (e) => {
+    try { e.dataTransfer.setData("text/plain", JSON.stringify({ pid: t.project.id, tid: t.id })); e.dataTransfer.effectAllowed = "move"; } catch {}
+  };
   return (
-    <div style={{ ...S.tcard, ...(t.done ? S.tcardDone : {}), ...(dragging ? S.tcardDragging : {}) }}>
+    <div style={{ ...S.tcard, ...(t.done ? S.tcardDone : {}), ...(dragging ? S.tcardDragging : {}) }}
+      draggable onDragStart={onDragStart}>
       <button style={S.checkBtn} onClick={() => onToggle(t.project.id, t.id)}>
         {t.done ? <CheckCircle2 size={18} color="#51CF66" strokeWidth={2.2} />
                 : <Circle size={18} color="#3A434F" strokeWidth={2.2} />}
@@ -903,9 +950,33 @@ function TaskCard({ t, lane, onToggle, onOpen, dragging, moveOpen, onHandlePoint
             <span style={S.tcardCompany}>{t.project.company}</span>
           </span>
           {t.kind === "reply" && !t.done && <span style={{ ...S.dueMini, color: "#FF922B" }}>本日中</span>}
-          {t.kind !== "reply" && t.due && !t.done && <span style={{ ...S.dueMini, color: d.color }}>{d.text}</span>}
         </div>
       </div>
+
+      {t.kind !== "reply" && (
+        <div style={S.dueWrap}>
+          <button style={{ ...S.dueChip, color: t.due ? d.color : C.ink3, borderColor: t.due ? d.color + "44" : C.line }}
+            onClick={() => setDueOpen((v) => !v)} title="期限を変更">
+            <CalendarDays size={12} strokeWidth={2.3} />{t.due ? d.text : "期限"}
+          </button>
+          {dueOpen && (
+            <>
+              <div style={S.movePopScrim} onClick={() => setDueOpen(false)} />
+              <div style={S.duePop}>
+                {quick.map(([label, val]) => (
+                  <button key={label} style={S.dueItem} onClick={() => { onChangeDue(val); setDueOpen(false); }}>{label}</button>
+                ))}
+                <label style={S.dueDateRow}>
+                  <span style={S.dueDateLabel}>日付指定</span>
+                  <input type="date" style={S.dueDateInput} value={t.due || ""}
+                    onChange={(e) => { onChangeDue(e.target.value); setDueOpen(false); }} />
+                </label>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       <div style={S.moveWrap}>
         <button style={S.moveBtn} onPointerDown={(e) => onHandlePointerDown(e, t)}
           title="ドラッグで移動 / タップでメニュー">
@@ -1457,6 +1528,15 @@ function CalendarView({ projects, onOpen }) {
   const sd = selected ? new Date(selected + "T00:00:00") : null;
   const selLabel = sd ? `${sd.getMonth() + 1}月${sd.getDate()}日（${WD[sd.getDay()]}）` : "";
 
+  // 横スワイプで月を切り替え
+  const sw = useRef({ x: 0, y: 0 });
+  const onCalTouchStart = (e) => { const t = e.touches[0]; sw.current = { x: t.clientX, y: t.clientY }; };
+  const onCalTouchEnd = (e) => {
+    const t = (e.changedTouches && e.changedTouches[0]); if (!t) return;
+    const dx = t.clientX - sw.current.x, dy = t.clientY - sw.current.y;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.3) { dx < 0 ? nextM() : prevM(); }
+  };
+
   return (
     <div style={S.colWrap}>
       <div style={S.calBar}>
@@ -1466,7 +1546,7 @@ function CalendarView({ projects, onOpen }) {
         <button style={S.calToday} onClick={goToday}>今日</button>
       </div>
 
-      <div style={S.calGrid}>
+      <div style={S.calGrid} onTouchStart={onCalTouchStart} onTouchEnd={onCalTouchEnd}>
         {WD.map((w, i) => (
           <div key={w} style={{ ...S.calWd, color: i === 0 ? "#FF6B6B" : i === 6 ? "#2DD4BF" : C.ink3 }}>{w}</div>
         ))}
@@ -1622,6 +1702,10 @@ const S = {
     display: "flex", alignItems: "center", gap: 6, border: "none", background: C.accent,
     color: "#fff", fontSize: 14, fontWeight: 700, padding: "9px 14px", borderRadius: 10,
   },
+  addBtnIcon: {
+    display: "flex", alignItems: "center", justifyContent: "center", border: "none",
+    background: C.accent, color: "#fff", padding: 8, borderRadius: 10,
+  },
   addLabel: {},
 
   main: { padding: "20px 16px 64px", maxWidth: 1120, margin: "0 auto" },
@@ -1656,6 +1740,15 @@ const S = {
   replyItemMain: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, border: "none", background: "transparent", padding: 0, textAlign: "left" },
   replyItemCol: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 },
   replyItemSub: { fontSize: 12, color: C.ink2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  replyItemMetaRow: { display: "flex", alignItems: "center", gap: 10 },
+  replyItemWrap: { display: "flex", flexDirection: "column", gap: 0 },
+  msgToggle: { display: "flex", alignItems: "center", gap: 4, border: "none", background: "transparent", color: C.ink3, fontSize: 11.5, fontWeight: 600, padding: "5px 2px 2px 4px", textAlign: "left" },
+  msgQuote: { background: C.panel2, borderRadius: 10, padding: 12, marginTop: 4, display: "flex", flexDirection: "column", gap: 7, borderLeft: "3px solid rgba(255,146,43,0.5)" },
+  msgQuoteLabel: { fontSize: 11, fontWeight: 700, color: C.ink3 },
+  msgQuoteText: { fontSize: 13.5, color: C.ink, lineHeight: 1.7, whiteSpace: "pre-wrap" },
+  msgOpenProject: { alignSelf: "flex-start", border: "none", background: "transparent", color: "#FF922B", fontSize: 12.5, fontWeight: 700, padding: 0, marginTop: 2 },
+  replyItemReward: { fontFamily: F.disp, fontSize: 13, fontWeight: 700, color: C.ink2 },
+  replyItemDueSub: { fontSize: 12, fontWeight: 700, fontFamily: F.disp },
   replyItemName: { fontWeight: 700, fontSize: 14, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   replyItemLink: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 14.5, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.16)", padding: "5px 10px", borderRadius: 8, textDecoration: "none", flexShrink: 0 },
 
@@ -1838,6 +1931,13 @@ const S = {
   dueMini: { fontSize: 11.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
 
   moveWrap: { position: "relative", flexShrink: 0 },
+  dueWrap: { position: "relative", flexShrink: 0 },
+  dueChip: { display: "flex", alignItems: "center", gap: 4, border: "1px solid", background: "transparent", borderRadius: 8, padding: "5px 9px", fontSize: 12, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
+  duePop: { position: "absolute", top: 30, right: 0, zIndex: 31, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", padding: 6, display: "flex", flexDirection: "column", gap: 2, minWidth: 150 },
+  dueItem: { border: "none", background: "transparent", borderRadius: 7, padding: "8px 10px", fontSize: 13.5, fontWeight: 600, color: C.ink, textAlign: "left" },
+  dueDateRow: { display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderTop: `1px solid ${C.line}`, marginTop: 2 },
+  dueDateLabel: { fontSize: 12.5, color: C.ink3, fontWeight: 600, flexShrink: 0 },
+  dueDateInput: { flex: 1, minWidth: 0, border: `1px solid ${C.line}`, background: C.panel2, color: C.ink, borderRadius: 7, padding: "5px 7px", fontSize: 13 },
   moveBtn: { border: "none", background: "transparent", padding: 2, display: "flex", cursor: "grab", touchAction: "none" },
   tcardDragging: { opacity: 0.4 },
   swipeArea: { minHeight: "55vh" },
