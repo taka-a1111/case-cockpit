@@ -236,6 +236,15 @@ const dueDaysList = (p) => {
   });
   return arr;
 };
+// 締切候補を「名前＋日数」で返す（一覧でタスク名を出すため）
+const dueItemsOf = (p) => {
+  const arr = [];
+  const dl = daysUntil(p.deadline); if (dl !== null) arr.push({ n: dl, label: "納期", isDeadline: true });
+  (p.tasks || []).forEach((t) => {
+    if (!t.done && t.kind !== "reply") { const n = daysUntil(t.due); if (n !== null) arr.push({ n, label: t.title || "（無題のタスク）", isDeadline: false }); }
+  });
+  return arr.sort((a, b) => a.n - b.n);
+};
 
 /* Claude呼び出し。APIキーがあればブラウザ直アクセス（HTML版）、なければプロキシ（Claudeアプリ版） */
 async function callClaude({ system, user, maxTokens = 1000 }) {
@@ -635,7 +644,10 @@ function FocusView({ kpi, projects, allProjects, onOpen }) {
             const dm = dueMeta(p.deadline);
             const _dd = dueDaysList(p);
             const nd = _dd.length ? Math.min(..._dd) : null;
-            const ndColor = nd === null ? C.ink3 : (nd <= 3 ? "#FF6B6B" : "#9AA4B2");
+            const dueItems = (openCard === "weekDue" || openCard === "overdue")
+              ? dueItemsOf(p).filter((it) => openCard === "overdue" ? it.n < 0 : (it.n >= 0 && it.n <= 7))
+              : [];
+            const dDays = (n) => n < 0 ? `${-n}日超過` : n === 0 ? "今日" : `あと${n}日`;
             return (
               <div key={p.id} style={S.replyItem}>
                 <button style={S.replyItemMain} onClick={() => onOpen(p)}>
@@ -648,10 +660,17 @@ function FocusView({ kpi, projects, allProjects, onOpen }) {
                         <span style={{ ...S.replyItemDueSub, color: dm.color }}>{dm.text}</span>
                       </span>
                     )}
+                    {dueItems.length > 0 && (
+                      <span style={S.dueTaskList}>
+                        {dueItems.map((it, idx) => (
+                          <span key={idx} style={S.dueTaskRow}>
+                            <span style={S.dueTaskName}>{it.isDeadline ? "📅 " : ""}{it.label}</span>
+                            <span style={{ ...S.dueTaskDays, color: it.n <= 3 ? "#FF6B6B" : "#9AA4B2" }}>{dDays(it.n)}</span>
+                          </span>
+                        ))}
+                      </span>
+                    )}
                   </span>
-                  {(openCard === "weekDue" || openCard === "overdue") && nd !== null && (
-                    <span style={{ ...S.replyItemDue, color: ndColor }}>{nd < 0 ? `${-nd}日超過` : nd === 0 ? "今日" : `あと${nd}日`}</span>
-                  )}
                 </button>
                 {p.replyUrl && (() => { const li = linkInfo(p.replyUrl); return (
                   <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
@@ -2012,6 +2031,10 @@ const S = {
   msgOpenProject: { alignSelf: "flex-start", border: "none", background: "transparent", color: "#6B8AFF", fontSize: 12.5, fontWeight: 700, padding: 0, marginTop: 2 },
   replyItemReward: { fontFamily: F.disp, fontSize: 13, fontWeight: 700, color: C.ink2 },
   replyItemDueSub: { fontSize: 12, fontWeight: 700, fontFamily: F.disp },
+  dueTaskList: { display: "flex", flexDirection: "column", gap: 4, marginTop: 5 },
+  dueTaskRow: { display: "flex", alignItems: "center", gap: 8 },
+  dueTaskName: { flex: 1, minWidth: 0, fontSize: 12.5, color: C.ink2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  dueTaskDays: { fontSize: 12, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0 },
   replyItemName: { fontWeight: 700, fontSize: 14, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   replyItemLink: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12.5, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.16)", padding: "6px 11px", borderRadius: 8, textDecoration: "none", flexShrink: 0, whiteSpace: "nowrap" },
 
