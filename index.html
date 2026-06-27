@@ -63,16 +63,29 @@ async function gasGet({ url, token }) {
   if (j && j.ok === false) throw new Error(j.error || "認証エラー（同期キーを確認してください）");
   return Array.isArray(j) ? j : (j && j.data) ? j.data : null;
 }
-// 保存はデータを分割してGETで送る（URLが長くなりすぎるのを防ぐ）
+// 保存はデータを分割してGETで送る（URLが長くなりすぎるのを防ぐ）。
+// エンコード後の長さで詰めるので、英数中心なら1〜数回で済み高速。
+function chunkForUrl(json, maxEnc) {
+  const chunks = [];
+  let i = 0;
+  while (i < json.length) {
+    let take = Math.min(json.length - i, maxEnc);
+    while (take > 1 && encodeURIComponent(json.slice(i, i + take)).length > maxEnc) {
+      take = Math.floor(take * 0.7) || 1;
+    }
+    chunks.push(json.slice(i, i + take));
+    i += take;
+  }
+  return chunks.length ? chunks : [""];
+}
 async function gasPost({ url, token }, data) {
   const json = JSON.stringify(data);
-  const CHUNK = 1500;
-  const total = Math.max(1, Math.ceil(json.length / CHUNK));
+  const parts = chunkForUrl(json, 6000); // エンコード後 約6000文字/回まで
+  const total = parts.length;
   let last = null;
   for (let i = 0; i < total; i++) {
-    const part = json.slice(i * CHUNK, (i + 1) * CHUNK);
     const u = url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) +
-      "&action=save&seq=" + i + "&total=" + total + "&chunk=" + encodeURIComponent(part) + "&_=" + Date.now();
+      "&action=save&seq=" + i + "&total=" + total + "&chunk=" + encodeURIComponent(parts[i]) + "&_=" + Date.now();
     let res;
     try { res = await fetch(u, { method: "GET", redirect: "follow" }); }
     catch (e) { throw new Error("接続できません。URLが正しいか、デプロイのアクセス権が『全員』か確認してください"); }
@@ -85,20 +98,20 @@ async function gasPost({ url, token }, data) {
 }
 
 const PLATFORMS = {
-  "クラウドワークス": "#FF9F43",
-  "ランサーズ": "#54B8F0",
-  "ココナラ": "#FF8A5B",
-  "直契約": "#3DD6C4",
-  "その他": "#8E97A6",
+  "クラウドワークス": "#9AA4B2",
+  "ランサーズ": "#9AA4B2",
+  "ココナラ": "#9AA4B2",
+  "直契約": "#9AA4B2",
+  "その他": "#9AA4B2",
 };
 const STATUSES = ["応募中", "進行中", "納品待ち", "検収中", "完了"];
 const REPLIES = ["なし", "要返信", "返信済み", "相手待ち"];
 
 const TASK_LANES = [
-  { key: "today",   label: "今日",       color: "#FF922B", tint: "rgba(255,146,43,0.15)" },
-  { key: "later",   label: "明日",       color: "#2DD4BF", tint: "rgba(45,212,191,0.14)" },
-  { key: "waiting", label: "相手待ち",   color: "#8B92F5", tint: "rgba(139,146,245,0.16)" },
-  { key: "payment", label: "支払い待ち", color: "#51CF66", tint: "rgba(81,207,102,0.15)" },
+  { key: "today",   label: "今日",       color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
+  { key: "later",   label: "明日",       color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
+  { key: "waiting", label: "相手待ち",   color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
+  { key: "payment", label: "支払い待ち", color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
 ];
 
 const INBOX_ID = "__inbox__";
@@ -109,17 +122,17 @@ function makeInbox() {
 }
 
 const REPLY_META = {
-  "要返信":   { color: "#FF922B", bg: "rgba(255,146,43,0.15)", label: "要返信" },
+  "要返信":   { color: "#6B8AFF", bg: "rgba(107,138,255,0.15)", label: "要返信" },
   "返信済み": { color: "#51CF66", bg: "rgba(81,207,102,0.15)", label: "返信済み" },
-  "相手待ち": { color: "#8B92F5", bg: "rgba(139,146,245,0.16)", label: "相手待ち" },
+  "相手待ち": { color: "#9AA4B2", bg: "#212834", label: "相手待ち" },
   "なし":     { color: "#616B7A", bg: "#212834", label: "—" },
 };
 const STATUS_META = {
-  "応募中":   "#8B92F5",
-  "進行中":   "#2DD4BF",
-  "納品待ち": "#E0913A",
-  "検収中":   "#A78BFA",
-  "完了":     "#8A93A0",
+  "応募中":   "#9AA4B2",
+  "進行中":   "#9AA4B2",
+  "納品待ち": "#9AA4B2",
+  "検収中":   "#9AA4B2",
+  "完了":     "#616B7A",
 };
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -190,9 +203,9 @@ function dueMeta(dateStr) {
   if (n === null) return { n, color: "#616B7A", text: "期限なし", urgent: false };
   if (n < 0)  return { n, color: "#FF6B6B", text: `${Math.abs(n)}日超過`, urgent: true };
   if (n === 0) return { n, color: "#FF6B6B", text: "今日", urgent: true };
-  if (n === 1) return { n, color: "#FF922B", text: "明日", urgent: true };
-  if (n <= 3) return { n, color: "#F5A623", text: `あと${n}日`, urgent: true };
-  if (n <= 7) return { n, color: "#2DD4BF", text: `あと${n}日`, urgent: false };
+  if (n === 1) return { n, color: "#FF6B6B", text: "明日", urgent: true };
+  if (n <= 3) return { n, color: "#FF6B6B", text: `あと${n}日`, urgent: true };
+  if (n <= 7) return { n, color: "#9AA4B2", text: `あと${n}日`, urgent: false };
   return { n, color: "#9AA4B2", text: `あと${n}日`, urgent: false };
 }
 const yen = (v) => (v ? "¥" + v.toLocaleString("ja-JP") : "—");
@@ -319,17 +332,23 @@ export default function App() {
       try { const sr = await window.storage.get(SYNC_KEY); if (sr && sr.value) cfg = { ...cfg, ...JSON.parse(sr.value) }; } catch {}
       setSync(cfg);
 
-      // まずローカルキャッシュ
+      // まずローカルキャッシュで即表示（待たせない）
       let data = null;
       try { const r = await window.storage.get(STORE_KEY); if (r && r.value) data = JSON.parse(r.value); } catch {}
+      if (!data) {
+        data = normalizeProjects(makeSample());
+        try { await window.storage.set(STORE_KEY, JSON.stringify(data)); } catch {}
+      }
+      setProjects(normalizeProjects(data));
+      setLoading(false);
 
-      // 同期が有効ならクラウドを優先して取得
+      // 同期が有効なら、裏でクラウド取得して差し替え
       if (cfg.on && cfg.url && cfg.token) {
         setSyncState({ status: "syncing", at: null, msg: "" });
         try {
           const remote = await gasGet(cfg);
           if (remote) {
-            data = remote;
+            setProjects(normalizeProjects(remote));
             try { await window.storage.set(STORE_KEY, JSON.stringify(remote)); } catch {}
           }
           setSyncState({ status: "ok", at: Date.now(), msg: "" });
@@ -337,13 +356,6 @@ export default function App() {
           setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) });
         }
       }
-
-      if (!data) {
-        data = normalizeProjects(makeSample());
-        try { await window.storage.set(STORE_KEY, JSON.stringify(data)); } catch {}
-      }
-      setProjects(normalizeProjects(data));
-      setLoading(false);
     })();
   }, []);
 
@@ -520,8 +532,8 @@ function FocusView({ kpi, projects, allProjects, onOpen }) {
   };
 
   const cards = [
-    { key: "reply", label: "要返信", value: kpi.needReply, unit: "件", color: "#FF922B", Icon: Reply, hot: kpi.needReply > 0 },
-    { key: "weekDue", label: "今週の締切", value: kpi.weekDue, unit: "件", color: "#2DD4BF", Icon: CalendarDays },
+    { key: "reply", label: "要返信", value: kpi.needReply, unit: "件", color: "#6B8AFF", Icon: Reply, hot: kpi.needReply > 0 },
+    { key: "weekDue", label: "今週の締切", value: kpi.weekDue, unit: "件", color: "#9AA4B2", Icon: CalendarDays },
     { key: "overdue", label: "期限超過", value: kpi.overdue, unit: "件", color: "#FF6B6B", Icon: AlertTriangle, hot: kpi.overdue > 0 },
     { key: "progress", label: "進行中の見込み", value: kpi.revenue ? "¥" + kpi.revenue.toLocaleString("ja-JP") : "—", unit: "", color: "#E8ECF2", Icon: Coins, wide: true, count: kpi.inProgress },
   ];
@@ -570,7 +582,7 @@ function FocusView({ kpi, projects, allProjects, onOpen }) {
                     <span style={S.replyItemName}>{p.company}</span>
                     <span style={S.replyItemSub}>{t.title}</span>
                   </span>
-                  <span style={{ ...S.replyItemDue, color: "#FF922B" }}>本日中</span>
+                  <span style={{ ...S.replyItemDue, color: "#6B8AFF" }}>本日中</span>
                 </button>
                 {p.replyUrl && (() => { const li = linkInfo(p.replyUrl); return (
                   <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
@@ -665,7 +677,7 @@ function PriorityRow({ p, onOpen }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={S.prowMeta}>
           <PlatformChip name={p.platform} small />
-          {replyN > 0 && <span style={{ ...S.replyPill, color: "#FF922B", background: "rgba(255,146,43,0.15)" }}><Reply size={11} strokeWidth={2.4} />返信{replyN}</span>}
+          {replyN > 0 && <span style={{ ...S.replyPill, color: "#6B8AFF", background: "rgba(107,138,255,0.15)" }}><Reply size={11} strokeWidth={2.4} />返信{replyN}</span>}
           {open > 0 && <span style={S.taskCount}><Circle size={10} strokeWidth={2.4} />{open}</span>}
           <span style={{ ...S.dueText, color: d.color }}>{d.text}</span>
           {replyN > 0 && p.replyUrl && (
@@ -758,7 +770,7 @@ function ProjectCard({ p, onOpen }) {
 
         <div style={S.cardFoot}>
           {replyN > 0 && (
-            <span style={{ ...S.replyPill, color: "#FF922B", background: "rgba(255,146,43,0.15)" }}>
+            <span style={{ ...S.replyPill, color: "#6B8AFF", background: "rgba(107,138,255,0.15)" }}>
               <Reply size={11} strokeWidth={2.4} />要返信{replyN}
             </span>
           )}
@@ -990,7 +1002,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, dragging, moveOpen, o
       <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
         onClick={() => { if (t.project.id !== INBOX_ID) (onOpenTask ? onOpenTask(t.project, t.id) : onOpen(t.project)); }}>
         <div style={{ ...S.tcardTitle, ...(t.done ? S.trowDone : {}) }}>
-          {t.kind === "reply" && <Reply size={13} color="#FF922B" strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
+          {t.kind === "reply" && <Reply size={13} color="#6B8AFF" strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
           {t.title || "（無題）"}
         </div>
         <div style={S.tcardMeta}>
@@ -998,7 +1010,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, dragging, moveOpen, o
             <PlatformChip name={t.project.platform} small />
             <span style={S.tcardCompany}>{t.project.company}</span>
           </span>
-          {t.kind === "reply" && !t.done && <span style={{ ...S.dueMini, color: "#FF922B" }}>本日中</span>}
+          {t.kind === "reply" && !t.done && <span style={{ ...S.dueMini, color: "#6B8AFF" }}>本日中</span>}
         </div>
       </div>
 
@@ -1285,7 +1297,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onDelete, confirmDel, onC
                 <span style={S.focusTaskLabel}>選んだタスクの期日変更</span>
               </div>
               <div style={S.focusTaskTitle}>
-                {focusTask.kind === "reply" && <Reply size={13} color="#FF922B" strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
+                {focusTask.kind === "reply" && <Reply size={13} color="#6B8AFF" strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
                 {focusTask.title || "（無題）"}
               </div>
               <div style={S.focusTaskQuick}>
@@ -1327,7 +1339,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onDelete, confirmDel, onC
             {pendingDiff.length > 0 && (
               <div style={S.diffBox}>
                 <div style={S.diffHead}>
-                  <AlertTriangle size={13} color="#FF922B" strokeWidth={2.4} />
+                  <AlertTriangle size={13} color="#6B8AFF" strokeWidth={2.4} />
                   <span style={S.diffTitle}>既存の値と異なります</span>
                   <button style={S.diffApplyAll} onClick={applyAllDiff}>すべて更新</button>
                 </div>
@@ -1711,7 +1723,7 @@ function CalendarView({ projects, onOpen }) {
 
       <div style={S.calGrid} onTouchStart={onCalTouchStart} onTouchEnd={onCalTouchEnd}>
         {WD.map((w, i) => (
-          <div key={w} style={{ ...S.calWd, color: i === 0 ? "#FF6B6B" : i === 6 ? "#2DD4BF" : C.ink3 }}>{w}</div>
+          <div key={w} style={{ ...S.calWd, color: i === 0 ? "#FF6B6B" : i === 6 ? C.ink3 : C.ink3 }}>{w}</div>
         ))}
         {cells.map((dd, i) => {
           if (dd === null) return <div key={i} style={S.calCellEmpty} />;
@@ -1725,7 +1737,7 @@ function CalendarView({ projects, onOpen }) {
           return (
             <button key={i} onClick={() => setSelected(k)}
               style={{ ...S.calCell, ...(isSel ? S.calCellSel : {}) }}>
-              <span style={{ ...S.calDay, color: isToday ? "#fff" : (dow === 0 || holiday) ? "#FF6B6B" : dow === 6 ? "#2DD4BF" : C.ink, ...(isToday ? S.calDayToday : {}) }}>{dd}</span>
+              <span style={{ ...S.calDay, color: isToday ? "#fff" : (dow === 0 || holiday) ? "#FF6B6B" : C.ink, ...(isToday ? S.calDayToday : {}) }}>{dd}</span>
               <span style={S.calDots}>
                 {dots.map((c, j) => <span key={j} style={{ ...S.calDot, background: c }} />)}
               </span>
@@ -1798,10 +1810,10 @@ function urlHint(platform) {
 // 返信先URLから「○○を開く」ラベルとアクセント色を判定
 function linkInfo(url) {
   if (!url) return null;
-  if (url.includes("chatwork")) return { label: "Chatworkを開く", short: "Chatwork", color: "#FF9F43" };
-  if (url.includes("crowdworks")) return { label: "クラウドワークスを開く", short: "CW", color: "#54B8F0" };
-  if (url.includes("lancers")) return { label: "ランサーズを開く", short: "ランサーズ", color: "#54B8F0" };
-  if (url.includes("coconala")) return { label: "ココナラを開く", short: "ココナラ", color: "#FF8A5B" };
+  if (url.includes("chatwork")) return { label: "Chatworkを開く", short: "Chatwork", color: "#6B8AFF" };
+  if (url.includes("crowdworks")) return { label: "クラウドワークスを開く", short: "CW", color: "#6B8AFF" };
+  if (url.includes("lancers")) return { label: "ランサーズを開く", short: "ランサーズ", color: "#6B8AFF" };
+  if (url.includes("coconala")) return { label: "ココナラを開く", short: "ココナラ", color: "#6B8AFF" };
   return { label: "返信先を開く", short: "開く", color: C.accent };
 }
 function blankDraft() {
@@ -1885,18 +1897,18 @@ const S = {
   parseBoxHead: { display: "flex", alignItems: "center", gap: 7 },
   parseBoxTitle: { fontFamily: F.disp, fontWeight: 700, fontSize: 14.5, color: C.ink },
   parseHint: { fontSize: 12.5, color: C.ink2, lineHeight: 1.55 },
-  diffBox: { background: "rgba(255,146,43,0.08)", border: "1px solid rgba(255,146,43,0.35)", borderRadius: 10, padding: 11, display: "flex", flexDirection: "column", gap: 9 },
+  diffBox: { background: "rgba(107,138,255,0.08)", border: "1px solid rgba(107,138,255,0.35)", borderRadius: 10, padding: 11, display: "flex", flexDirection: "column", gap: 9 },
   diffHead: { display: "flex", alignItems: "center", gap: 6 },
   diffTitle: { fontSize: 12.5, fontWeight: 700, color: C.ink },
-  diffApplyAll: { marginLeft: "auto", border: "none", background: "#FF922B", color: "#1A1208", borderRadius: 7, padding: "4px 11px", fontSize: 12, fontWeight: 700 },
+  diffApplyAll: { marginLeft: "auto", border: "none", background: "#6B8AFF", color: "#fff", borderRadius: 7, padding: "4px 11px", fontSize: 12, fontWeight: 700 },
   diffRow: { display: "flex", flexDirection: "column", gap: 4, background: C.panel2, borderRadius: 8, padding: "8px 10px" },
   diffRowTop: { display: "flex", alignItems: "center", gap: 8 },
   diffLabel: { fontSize: 12, fontWeight: 700, color: C.ink2 },
   diffApply: { marginLeft: "auto", border: `1px solid ${C.line}`, background: C.panel, color: C.ink, borderRadius: 6, padding: "3px 11px", fontSize: 11.5, fontWeight: 700 },
   diffVals: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
   diffCur: { fontSize: 12.5, color: C.ink3, textDecoration: "line-through" },
-  diffNext: { fontSize: 12.5, color: "#FF922B", fontWeight: 700 },
-  replyPanel: { background: C.panel, border: "1px solid rgba(255,146,43,0.4)", borderRadius: 14, padding: 12, display: "flex", flexDirection: "column", gap: 8 },
+  diffNext: { fontSize: 12.5, color: "#6B8AFF", fontWeight: 700 },
+  replyPanel: { background: C.panel, border: "1px solid rgba(107,138,255,0.4)", borderRadius: 14, padding: 12, display: "flex", flexDirection: "column", gap: 8 },
   replyPanelHead: { display: "flex", alignItems: "center", gap: 8, paddingBottom: 4 },
   replyPanelDot: { width: 9, height: 9, borderRadius: "50%", flexShrink: 0 },
   replyPanelNum: { fontFamily: F.disp, fontSize: 12.5, fontWeight: 700, color: C.ink3, marginLeft: "auto" },
@@ -1911,10 +1923,10 @@ const S = {
   replyItemMetaRow: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
   replyItemWrap: { display: "flex", flexDirection: "column", gap: 0 },
   msgToggle: { display: "flex", alignItems: "center", gap: 4, border: "none", background: "transparent", color: C.ink3, fontSize: 11.5, fontWeight: 600, padding: "5px 2px 2px 4px", textAlign: "left" },
-  msgQuote: { background: C.panel2, borderRadius: 10, padding: 12, marginTop: 4, display: "flex", flexDirection: "column", gap: 7, borderLeft: "3px solid rgba(255,146,43,0.5)" },
+  msgQuote: { background: C.panel2, borderRadius: 10, padding: 12, marginTop: 4, display: "flex", flexDirection: "column", gap: 7, borderLeft: "3px solid rgba(107,138,255,0.5)" },
   msgQuoteLabel: { fontSize: 11, fontWeight: 700, color: C.ink3 },
   msgQuoteText: { fontSize: 13.5, color: C.ink, lineHeight: 1.7, whiteSpace: "pre-wrap" },
-  msgOpenProject: { alignSelf: "flex-start", border: "none", background: "transparent", color: "#FF922B", fontSize: 12.5, fontWeight: 700, padding: 0, marginTop: 2 },
+  msgOpenProject: { alignSelf: "flex-start", border: "none", background: "transparent", color: "#6B8AFF", fontSize: 12.5, fontWeight: 700, padding: 0, marginTop: 2 },
   replyItemReward: { fontFamily: F.disp, fontSize: 13, fontWeight: 700, color: C.ink2 },
   replyItemDueSub: { fontSize: 12, fontWeight: 700, fontFamily: F.disp },
   replyItemName: { fontWeight: 700, fontSize: 14, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
@@ -1969,7 +1981,7 @@ const S = {
     display: "flex", alignItems: "center", gap: 5, background: C.panel, border: `1px solid ${C.line}`,
     borderRadius: 9, padding: "7px 11px", fontSize: 14.5, color: C.ink2, fontWeight: 600,
   },
-  replyFilterOn: { background: "rgba(255,146,43,0.15)", borderColor: "#6E4A30", color: "#FF922B" },
+  replyFilterOn: { background: "rgba(107,138,255,0.15)", borderColor: "#3A4663", color: "#6B8AFF" },
   resultCount: { marginLeft: "auto", fontSize: 12, color: C.ink3, fontWeight: 600, fontFamily: F.disp },
 
   /* card grid */
@@ -2171,7 +2183,7 @@ const S = {
   calCellEmpty: { background: C.panel2, borderRadius: 9, minHeight: 50, opacity: 0.4 },
   calCellSel: { borderColor: C.accent, background: "rgba(107,138,255,0.1)" },
   calDay: { fontFamily: F.disp, fontWeight: 700, fontSize: 14, lineHeight: 1 },
-  calDayToday: { background: "#FF922B", color: "#fff", borderRadius: 13, minWidth: 21, height: 21, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" },
+  calDayToday: { background: "#6B8AFF", color: "#fff", borderRadius: 13, minWidth: 21, height: 21, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" },
   calDots: { display: "flex", gap: 2.5, minHeight: 6, alignItems: "center" },
   calDot: { width: 5.5, height: 5.5, borderRadius: "50%" },
 
