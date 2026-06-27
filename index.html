@@ -968,9 +968,9 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onDelete, confirmDel, onC
     setParsing(true); setParseMsg(""); setPendingDiff([]);
     try {
       const text = await callClaude({
-        maxTokens: 1200,
-        system: "あなたは案件情報を構造化するアシスタントです。貼り付けられた募集文・案件情報・クライアントとのやり取りから、以下のJSONだけを出力します。説明やコードブロック記法は付けないこと。\n{\"company\":\"会社名/クライアント名\",\"platform\":\"クラウドワークス|ランサーズ|ココナラ|直契約|その他 のいずれか\",\"work\":\"業務内容の要約\",\"reward\":数値（報酬の円。範囲なら下限。不明は0）,\"deadline\":\"YYYY-MM-DD（納期。不明は空文字）\",\"replyUrl\":\"応募/メッセージのURL。無ければ空文字\",\"received\":\"クライアント（相手）から届いた、まだ返信していないメッセージの本文。あれば改変せず原文のまま入れる。自分が送った文や事務局の定型通知は含めない。無ければ空文字\"}\n貼り付け内容に相手からのメッセージ本文が含まれていれば、必ず received に原文を抜き出すこと。判断できない項目は空文字または0にする。",
-        user: pasteText.slice(0, 6000),
+        maxTokens: 1500,
+        system: "あなたは案件情報を構造化するアシスタントです。貼り付けられた募集文・案件情報・クライアントとのやり取り（複数の往復を含むことがある）から、以下のJSONだけを出力します。説明やコードブロック記法は付けないこと。\n{\"company\":\"会社名/クライアント名\",\"platform\":\"クラウドワークス|ランサーズ|ココナラ|直契約|その他 のいずれか\",\"work\":\"業務内容の要約\",\"reward\":数値（報酬の円。範囲なら下限。不明は0）,\"deadline\":\"YYYY-MM-DD（納期。不明は空文字）\",\"replyUrl\":\"応募/メッセージのURL。無ければ空文字\",\"received\":\"相手（クライアント）から届いた最新の、まだ返信していないメッセージの本文。原文のまま。自分（Infosuccess/インフォサクセス側）の送信文や事務局の定型通知は含めない。無ければ空文字\",\"summary\":\"やり取りが複数往復ある場合、これまでの経緯（依頼内容・決まったこと・未決事項・相手の要望）を箇条書き中心で200字程度に要約。単発の募集文のみなら空文字\"}\n複数の往復が貼られた場合は、時系列で最後にある『相手からの』メッセージを received に入れ、それ以前の流れ全体を summary にまとめること。自分の発言を received に入れないこと。判断できない項目は空文字または0にする。",
+        user: pasteText.slice(0, 8000),
       });
       let obj = {};
       try { obj = JSON.parse(text.replace(/```json|```/g, "").trim()); } catch { obj = {}; }
@@ -983,8 +983,9 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onDelete, confirmDel, onC
         deadline: /^\d{4}-\d{2}-\d{2}$/.test(obj.deadline || "") ? obj.deadline : "",
         replyUrl: obj.replyUrl || "",
         received: (obj.received || "").trim(),
+        summary: (obj.summary || "").trim(),
       };
-      const labels = { company: "会社名", platform: "契約先", work: "業務内容", reward: "報酬", deadline: "納期", replyUrl: "返信先URL", received: "届いたメッセージ" };
+      const labels = { company: "会社名", platform: "契約先", work: "業務内容", reward: "報酬", deadline: "納期", replyUrl: "返信先URL", received: "届いたメッセージ", summary: "経緯メモ" };
       const autoFill = {};   // 空欄に入れる
       const diffs = [];      // 既存値と異なる（確認が必要）
       Object.keys(parsed).forEach((f) => {
@@ -1187,8 +1188,8 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onDelete, confirmDel, onC
             </div>
             <div style={S.parseHint}>
               {isNew
-                ? "募集文・案件情報やクライアントから届いたメッセージを貼り付けると、会社名・契約先・業務・報酬・期限に加え、まだ返信していないメッセージ本文も読み取って下に入力します。"
-                : "更新された案件情報や、届いたメッセージを貼り付けて読み取れます。空欄は自動入力し、既存の値と異なる項目は上書き前に確認します。届いた未返信メッセージは「届いたメッセージ」欄に取り込み、返信アシストに使えます。"}
+                ? "募集文や、クライアントとのやり取り画面を丸ごと貼り付けると、会社名・契約先・業務・報酬・期限に加え、最新の未返信メッセージと、これまでの経緯メモを自動で読み取って入力します。"
+                : "やり取り画面を丸ごと貼り付けると、最新の未返信メッセージを「届いたメッセージ」に、これまでの流れを「経緯メモ」にまとめて取り込みます。空欄は自動入力し、既存の値と異なる項目は上書き前に確認します。"}
             </div>
             <textarea style={{ ...S.input, minHeight: 70, resize: "vertical" }} value={pasteText}
               placeholder="募集文・メッセージなどをそのまま貼り付け"
