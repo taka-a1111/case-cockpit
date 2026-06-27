@@ -589,15 +589,14 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
   const [showDone, setShowDone] = useState(false);
   const [dragId, setDragId] = useState(null);
 
-  const startDrag = (e, pid) => {
-    e.stopPropagation();
-    try { e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  const startDrag = (pid, el, pointerId) => {
+    try { el && el.setPointerCapture && pointerId != null && el.setPointerCapture(pointerId); } catch {}
     setDragId(pid);
     const move = (ev) => {
       if (ev.cancelable) ev.preventDefault();
       const x = ev.clientX, y = ev.clientY;
-      const el = document.elementFromPoint(x, y);
-      const card = el && el.closest && el.closest("[data-pid]");
+      const elAt = document.elementFromPoint(x, y);
+      const card = elAt && elAt.closest && elAt.closest("[data-pid]");
       if (card) {
         const overId = card.getAttribute("data-pid");
         if (overId && overId !== pid) onReorder && onReorder(pid, overId);
@@ -609,6 +608,10 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
       document.removeEventListener("pointercancel", up);
       setDragId(null);
       onReorderCommit && onReorderCommit();
+      // ドラッグ直後の click を1回だけ無効化（詳細が開くのを防ぐ）
+      const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); document.removeEventListener("click", swallow, true); };
+      document.addEventListener("click", swallow, true);
+      setTimeout(() => document.removeEventListener("click", swallow, true), 450);
     };
     document.addEventListener("pointermove", move, { passive: false });
     document.addEventListener("pointerup", up);
@@ -874,11 +877,25 @@ function ProjectCard({ p, onOpen, onSetDeadline, onAddTask, onUpdateTask, onDrag
   const [editId, setEditId] = useState(null);
   const [editFocus, setEditFocus] = useState("title");
   const dateRef = useRef(null);
+  const editRef = useRef(null);
+  const lpTimer = useRef(null);
+  const downInfo = useRef(null);
   useEffect(() => {
     if (editId && editFocus === "date" && dateRef.current) {
       try { dateRef.current.focus(); dateRef.current.showPicker && dateRef.current.showPicker(); } catch {}
     }
   }, [editId, editFocus]);
+  // 編集中：編集ボックス以外のどこをタップしても、編集を閉じるだけ（詳細は開かない）
+  useEffect(() => {
+    if (!editId) return;
+    const onDocClick = (e) => {
+      if (editRef.current && editRef.current.contains(e.target)) return;
+      e.stopPropagation();
+      setEditId(null);
+    };
+    document.addEventListener("click", onDocClick, true);
+    return () => document.removeEventListener("click", onDocClick, true);
+  }, [editId]);
   const openTasks = p.tasks
     .filter((t) => !t.done && t.kind !== "reply")
     .sort((a, b) => {
@@ -895,14 +912,34 @@ function ProjectCard({ p, onOpen, onSetDeadline, onAddTask, onUpdateTask, onDrag
   const submitTask = () => { const t = newTitle.trim(); if (t) { onAddTask && onAddTask(p.id, "later", t); setNewTitle(""); } };
   const upd = (tid, patch) => onUpdateTask && onUpdateTask(p.id, tid, patch);
   const draggable = !!onDragHandle;
+  // カード本体をどこでも長押し→ドラッグ開始（タスク行・ボタン等はそれぞれ pointerdown を止めるので対象外）
+  const cardDown = (e) => {
+    if (!draggable) return;
+    downInfo.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId, el: e.currentTarget };
+    clearTimeout(lpTimer.current);
+    lpTimer.current = setTimeout(() => {
+      lpTimer.current = null;
+      if (downInfo.current) onDragHandle(p.id, downInfo.current.el, downInfo.current.pointerId);
+    }, 300);
+  };
+  const cardMove = (e) => {
+    if (lpTimer.current && downInfo.current) {
+      if (Math.abs(e.clientX - downInfo.current.x) > 10 || Math.abs(e.clientY - downInfo.current.y) > 10) {
+        clearTimeout(lpTimer.current); lpTimer.current = null;
+      }
+    }
+  };
+  const cardUp = () => { if (lpTimer.current) { clearTimeout(lpTimer.current); lpTimer.current = null; } };
   return (
     <div data-pid={p.id}
       style={{ ...S.card, ...(dragging ? S.cardDragging : {}), ...(dragActive && !dragging ? S.cardDragOther : {}) }}
-      role="button" tabIndex={0} onClick={() => { if (editId) setEditId(null); else onOpen(p); }}>
+      role="button" tabIndex={0}
+      onPointerDown={cardDown} onPointerMove={cardMove} onPointerUp={cardUp} onPointerCancel={cardUp}
+      onClick={() => { if (editId) setEditId(null); else onOpen(p); }}>
       {(draggable || replyN > 0) && (
         <div style={S.cardHead}>
           {draggable && (
-            <span style={S.cardGrip} onClick={stop} onPointerDown={(e) => onDragHandle(e, p.id)} title="ドラッグで並び替え">
+            <span style={S.cardGrip} onClick={stop} onPointerDown={(e) => { e.stopPropagation(); onDragHandle(p.id, e.currentTarget, e.pointerId); }} title="ドラッグで並び替え">
               <GripVertical size={17} strokeWidth={2} />
             </span>
           )}
@@ -915,7 +952,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onAddTask, onUpdateTask, onDrag
       <div style={S.cardCompany}>{p.company}</div>
 
       <div style={S.cardMetaLine}>
-        <label style={{ ...S.cardDeadlineSub, ...(dl && dl.overdue ? S.cardDeadlineOver : {}), ...(dl ? {} : S.cardDeadlineEmpty) }} onClick={openPicker}>
+        <label style={{ ...S.cardDeadlineSub, ...(dl && dl.overdue ? S.cardDeadlineOver : {}), ...(dl ? {} : S.cardDeadlineEmpty) }} onPointerDown={stop} onClick={openPicker}>
           {dl ? `納期 ${dl.text}` : "＋ 納期を設定"}
           <input type="date" value={p.deadline || ""} style={S.cardDateHidden}
             onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />
@@ -929,7 +966,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onAddTask, onUpdateTask, onDrag
             if (editId === t.id) {
               const dateField = t.start ? "start" : "due";
               return (
-                <div key={t.id} style={S.cardTaskEdit} onClick={stop} onPointerDown={stop}>
+                <div key={t.id} ref={editRef} style={S.cardTaskEdit} onClick={stop} onPointerDown={stop}>
                   <input autoFocus={editFocus !== "date"} style={S.cardTaskEditInput} value={t.title}
                     placeholder="やること"
                     onChange={(e) => upd(t.id, { title: e.target.value })}
@@ -968,7 +1005,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onAddTask, onUpdateTask, onDrag
           })}
           {moreTasks > 0 && <div style={S.cardTaskMore}>ほか {moreTasks} 件</div>}
           {adding && (
-            <div style={S.cardAddRow} onClick={stop}>
+            <div style={S.cardAddRow} onClick={stop} onPointerDown={stop}>
               <input autoFocus style={S.cardAddInput} value={newTitle} placeholder="やることを入力"
                 onChange={(e) => setNewTitle(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); submitTask(); } }} />
@@ -981,7 +1018,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onAddTask, onUpdateTask, onDrag
 
       <div style={S.cardFoot}>
         {!adding && (
-          <button style={S.cardAddTaskBtn} onClick={(e) => { stop(e); setAdding(true); }}>
+          <button style={S.cardAddTaskBtn} onPointerDown={stop} onClick={(e) => { stop(e); setAdding(true); }}>
             <Plus size={15} strokeWidth={2.4} />タスクを追加
           </button>
         )}
@@ -989,7 +1026,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onAddTask, onUpdateTask, onDrag
         {li && (
           <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
             style={{ ...S.openLinkCard, color: li.color, background: li.color + "22" }}
-            onClick={stop} title={li.label}>
+            onPointerDown={stop} onClick={stop} title={li.label}>
             <ExternalLink size={13} strokeWidth={2.4} />{li.short}
           </a>
         )}
