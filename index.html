@@ -490,6 +490,8 @@ export default function App() {
     }));
   const toggleProjectDone = (pid) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, status: p.status === "完了" ? "進行中" : "完了" }));
+  const setProjectStatus = (pid, status) =>
+    persist(projects.map((p) => p.id !== pid ? p : { ...p, status }));
   const changeLane = (pid, tid, lane) => {
     if (lane === "waiting" || lane === "payment") {
       const status = lane === "waiting" ? "相手待ち" : "支払い待ち";
@@ -589,7 +591,7 @@ export default function App() {
       {/* ===== Body ===== */}
       <main style={S.main} onTouchStart={onMainTouchStart} onTouchEnd={onMainTouchEnd}>
         {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} />}
-        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onAddTask={addTaskToLane} activeLane={activeLane} setActiveLane={setActiveLane} />}
+        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onAddTask={addTaskToLane} activeLane={activeLane} setActiveLane={setActiveLane} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={setEditing} />}
       </main>
 
@@ -620,6 +622,7 @@ export default function App() {
           <SubtaskSheet project={p} task={t} focus={editTask.focus}
             onClose={goBack}
             onUpdate={(patch) => updateTask(editTask.pid, editTask.tid, patch)}
+            onStatusChange={(s) => setProjectStatus(editTask.pid, s)}
             onToggle={() => { toggleTask(editTask.pid, editTask.tid); goBack(); }}
             onDelete={() => { removeTaskFromProject(editTask.pid, editTask.tid); goBack(); }} />
         );
@@ -707,7 +710,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
 
   const cards = [
     { key: "reply", label: "要返信", value: kpi.needReply, unit: "件", color: "#6B8AFF", Icon: Reply, hot: kpi.needReply > 0 },
-    { key: "weekDue", label: "7日以内の締切", value: kpi.weekDue, unit: "件", color: "#9AA4B2", Icon: CalendarDays },
+    { key: "weekDue", label: "7日以内", value: kpi.weekDue, unit: "件", color: "#9AA4B2", Icon: CalendarDays },
     { key: "overdue", label: "期限超過", value: kpi.overdue, unit: "件", color: "#FF6B6B", Icon: AlertTriangle, hot: kpi.overdue > 0 },
     { key: "progress", label: "進行中の見込み", value: kpi.revenue ? "¥" + kpi.revenue.toLocaleString("ja-JP") : "—", unit: "", color: "#E8ECF2", Icon: Coins, wide: true, count: kpi.inProgress },
   ];
@@ -1043,7 +1046,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
 /* ============================================================
    タスクビュー（横タブ・横スワイプ切替・ポインタD&D）
    ============================================================ */
-function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onChangeDue, onChangeStart, onAddTask, activeLane, setActiveLane }) {
+function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChangeLane, onChangeDue, onChangeStart, onAddTask, activeLane, setActiveLane }) {
   const [overTab, setOverTab] = useState(null);
   const [moveId, setMoveId] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -1190,7 +1193,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onCha
             <div style={S.list}>
               {g.tasks.map((t) => (
                 <TaskCard key={t.id} t={t} lane={activeLane}
-                  onToggle={onToggle} onOpen={onOpen} onOpenTask={onOpenTask}
+                  onToggle={onToggle} onOpen={onOpen} onOpenTask={onOpenTask} onEditTask={onEditTask}
                   dragging={dragTid === t.id}
                   moveOpen={moveId === t.id}
                   onHandlePointerDown={onHandlePointerDown}
@@ -1210,9 +1213,12 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onCha
   );
 }
 
-function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, dragging, moveOpen, onHandlePointerDown, onMove, onChangeDue, onChangeStart }) {
+function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging, moveOpen, onHandlePointerDown, onMove, onChangeDue, onChangeStart }) {
   const judge = taskJudgeDate(t); // いつやる（start）優先、なければ期限（due）。レーン判定と一致させる
   const d = dueMeta(judge);
+  const jn = judge ? daysUntil(judge) : null;
+  // 赤は「期限超過」のみ。今日は青、それ以外はグレー
+  const chipColor = jn === null ? C.ink3 : (jn < 0 ? "#FF6B6B" : jn === 0 ? C.accent : C.ink2);
   const [dueOpen, setDueOpen] = useState(false);
   const dStrLocal = (off) => { const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + off); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
   const quick = [
@@ -1230,7 +1236,11 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, dragging, moveOpen, o
                 : <Circle size={18} color="#3A434F" strokeWidth={2.2} />}
       </button>
       <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
-        onClick={() => { if (t.project.id !== INBOX_ID) (onOpenTask ? onOpenTask(t.project, t.id) : onOpen(t.project)); }}>
+        onClick={() => {
+          if (t.project.id === INBOX_ID) { onEditTask ? onEditTask(t.project.id, t.id) : onOpen(t.project); return; }
+          if (t.kind === "reply") { onOpenTask ? onOpenTask(t.project, t.id) : onOpen(t.project); return; }
+          onEditTask ? onEditTask(t.project.id, t.id) : (onOpenTask ? onOpenTask(t.project, t.id) : onOpen(t.project));
+        }}>
         <div style={{ ...S.tcardTitle, ...(t.done ? S.trowDone : {}) }}>
           {t.kind === "reply" && <Reply size={13} color="#6B8AFF" strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
           {t.title || "（無題）"}
@@ -1246,7 +1256,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, dragging, moveOpen, o
 
       {t.kind !== "reply" && (
         <div style={S.dueWrap}>
-          <button style={{ ...S.dueChip, color: judge ? d.color : C.ink3, borderColor: judge ? d.color + "44" : C.line }}
+          <button style={{ ...S.dueChip, color: judge ? chipColor : C.ink3, borderColor: judge ? chipColor + "44" : C.line }}
             onClick={() => setDueOpen((v) => !v)} title="いつやるかを変更">
             <CalendarDays size={12} strokeWidth={2.3} />{judge ? d.text : "日付"}
           </button>
@@ -2021,7 +2031,7 @@ function CalendarView({ projects, onOpen }) {
 /* ============================================================
    小物コンポーネント
    ============================================================ */
-function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDelete }) {
+function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDelete, onStatusChange }) {
   const [confirm, setConfirm] = useState(false);
   return (
     <>
@@ -2043,6 +2053,15 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
             <CalendarDays size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <DateField value={task.due} placeholder="期限" onChange={(v) => onUpdate({ due: v })} />
           </div>
+          {project.id !== INBOX_ID && onStatusChange && (
+            <div style={S.infoRow}>
+              <Briefcase size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
+              <select style={S.infoSelect} value={project.status || "進行中"}
+                onChange={(e) => onStatusChange(e.target.value)}>
+                {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          )}
         </div>
         <div style={S.taskSheetFoot}>
           {confirm ? (
