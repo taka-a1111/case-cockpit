@@ -38,7 +38,7 @@ import {
   LayoutDashboard, Briefcase, ListChecks, Plus, X, Trash2, Reply,
   Clock, CheckCircle2, Circle, AlertTriangle, Inbox, Sparkles, Copy, Check,
   CalendarDays, Coins, ExternalLink, GripVertical, Settings, ChevronLeft, ChevronRight, ListPlus, Download, Upload,
-  AlignLeft, CornerDownRight, Link2
+  AlignLeft, CornerDownRight, Link2, ArrowUpDown
 } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0";
 
 /* ============================================================
@@ -587,10 +587,15 @@ export default function App() {
 function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
-  const [fPlat, setFPlat] = useState("すべて");
-  const [fReply, setFReply] = useState(false);
-  const [showDone, setShowDone] = useState(false);
+  const [sortMode, setSortMode] = useState("manual");
+  const [sortOpen, setSortOpen] = useState(false);
   const [dragId, setDragId] = useState(null);
+  useEffect(() => {
+    if (!sortOpen) return;
+    const close = (e) => { if (!e.target.closest || !e.target.closest("[data-sortwrap]")) setSortOpen(false); };
+    document.addEventListener("click", close, true);
+    return () => document.removeEventListener("click", close, true);
+  }, [sortOpen]);
 
   const startDrag = (pid, el, pointerId) => {
     try { el && el.setPointerCapture && pointerId != null && el.setPointerCapture(pointerId); } catch {}
@@ -624,12 +629,18 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
   // 返信タスク（案件ごと複数あり得る）
   const replyEntries = projects.flatMap((p) => replyTasksOf(p).map((t) => ({ p, t })));
 
-  // 一覧の元データ：完了を表示するなら全件、しないなら進行中のみ
-  const base = (showDone ? (allProjects || projects).filter((p) => p.id !== INBOX_ID) : projects);
-  const cardList = base
-    .filter((p) => fPlat === "すべて" || p.platform === fPlat)
-    .filter((p) => !fReply || replyTasksOf(p).length > 0);
-  const doneCount = (allProjects || projects).filter((p) => p.id !== INBOX_ID && p.status === "完了").length;
+  // 案件一覧（進行中のみ）。並び替えモードで順序を切り替え
+  const dueOf = (p) => { const n = daysUntil(p.deadline); return n === null ? Infinity : n; };
+  let cardList = projects.filter((p) => p.id !== INBOX_ID && p.status !== "完了");
+  if (sortMode === "reward") cardList = [...cardList].sort((a, b) => (Number(b.reward) || 0) - (Number(a.reward) || 0));
+  else if (sortMode === "dueAsc") cardList = [...cardList].sort((a, b) => dueOf(a) - dueOf(b));
+  else if (sortMode === "dueDesc") cardList = [...cardList].sort((a, b) => {
+    const da = dueOf(a), db = dueOf(b);
+    if (da === Infinity && db === Infinity) return 0;
+    if (da === Infinity) return 1; if (db === Infinity) return -1;
+    return db - da;
+  });
+  const sortLabels = { manual: "手動（ドラッグ）", reward: "金額が高い順", dueAsc: "納期が近い順", dueDesc: "納期が遠い順" };
 
   const minDue = (p) => { const a = dueDaysList(p); return a.length ? Math.min(...a) : Infinity; };
   const lists = {
@@ -767,24 +778,24 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
       )}
 
       <section>
-        <SectionHead icon={<Clock size={15} />} title="案件" sub="" />
-        <div style={S.focusFilterBar}>
-          <FilterSelect value={fPlat} onChange={setFPlat} options={["すべて", ...Object.keys(PLATFORMS)]} />
-          <button onClick={() => setFReply((v) => !v)}
-            style={{ ...S.replyFilter, ...(fReply ? S.replyFilterOn : {}) }}>
-            <Reply size={13} strokeWidth={2.4} /> 要返信のみ
+        <div style={S.sortWrap} data-sortwrap>
+          <button style={S.sortBtn} onClick={() => setSortOpen((v) => !v)}>
+            <ArrowUpDown size={15} strokeWidth={2.2} />並び替え
           </button>
-          {doneCount > 0 && (
-            <button onClick={() => setShowDone((v) => !v)}
-              style={{ ...S.replyFilter, ...(showDone ? S.replyFilterOn : {}) }}>
-              <CheckCircle2 size={13} strokeWidth={2.4} /> 完了も表示
-            </button>
+          {sortOpen && (
+            <div style={S.sortMenu}>
+              {["manual", "reward", "dueAsc", "dueDesc"].map((k) => (
+                <button key={k} style={{ ...S.sortItem, ...(sortMode === k ? S.sortItemOn : {}) }}
+                  onClick={() => { setSortMode(k); setSortOpen(false); }}>
+                  {sortLabels[k]}
+                </button>
+              ))}
+            </div>
           )}
-          <span style={S.resultCount}>{cardList.length}件</span>
         </div>
-        {cardList.length === 0 && <Empty text="条件に合う案件がありません。" />}
+        {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
         <div style={S.grid}>
-          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onDragHandle={sortMode === "manual" ? startDrag : undefined} dragging={dragId === p.id} dragActive={dragId !== null} />)}
         </div>
       </section>
     </div>
@@ -2108,6 +2119,11 @@ const S = {
   main: { padding: "20px 16px 64px", maxWidth: 1120, margin: "0 auto" },
   viewDots: { display: "flex", justifyContent: "center", gap: 7, marginBottom: 14 },
   focusFilterBar: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 },
+  sortWrap: { position: "relative", display: "flex", justifyContent: "flex-end", marginBottom: 12 },
+  sortBtn: { display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${C.line}`, background: C.panel, color: C.ink2, borderRadius: 10, padding: "8px 13px", fontSize: 14, fontWeight: 700 },
+  sortMenu: { position: "absolute", top: "100%", right: 0, marginTop: 6, zIndex: 25, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 12, padding: 6, display: "flex", flexDirection: "column", gap: 2, minWidth: 180, boxShadow: "0 8px 24px rgba(0,0,0,0.5)" },
+  sortItem: { textAlign: "left", border: "none", background: "transparent", color: C.ink, fontSize: 14.5, fontWeight: 600, padding: "10px 12px", borderRadius: 8 },
+  sortItemOn: { background: C.accent + "26", color: C.accent, fontWeight: 700 },
   viewDot: { width: 7, height: 7, borderRadius: "50%", background: C.line, transition: "background 0.15s, width 0.15s" },
   viewDotOn: { background: C.accent, width: 20 },
   colWrap: { display: "flex", flexDirection: "column", gap: 22 },
