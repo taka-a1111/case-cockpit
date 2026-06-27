@@ -69,7 +69,7 @@ const INBOX_ID = "__inbox__";
 function makeInbox() {
   return { id: INBOX_ID, company: "案件なし", platform: "その他", work: "", reward: 0,
     status: "進行中", reply: "なし", deadline: "", note: "",
-    received: "", replyDraft: "", repliedAt: null, replyUrl: "", replyHistory: [], tasks: [] };
+    received: "", replyDraft: "", repliedAt: null, replyUrl: "", replyHistory: [], summary: "", tasks: [] };
 }
 
 const REPLY_META = {
@@ -88,6 +88,17 @@ const STATUS_META = {
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+// 日本の祝日（内閣府ベース・2025〜2027）。カレンダーで赤表示に使う
+const HOLIDAYS_JP = new Set([
+  // 2025
+  "2025-01-01","2025-01-13","2025-02-11","2025-02-23","2025-02-24","2025-03-20","2025-04-29","2025-05-03","2025-05-04","2025-05-05","2025-05-06","2025-07-21","2025-08-11","2025-09-15","2025-09-23","2025-10-13","2025-11-03","2025-11-23","2025-11-24",
+  // 2026
+  "2026-01-01","2026-01-12","2026-02-11","2026-02-23","2026-03-20","2026-04-29","2026-05-03","2026-05-04","2026-05-05","2026-05-06","2026-07-20","2026-08-11","2026-09-21","2026-09-22","2026-09-23","2026-10-12","2026-11-03","2026-11-23",
+  // 2027
+  "2027-01-01","2027-01-11","2027-02-11","2027-02-23","2027-03-21","2027-04-29","2027-05-03","2027-05-04","2027-05-05","2027-07-19","2027-08-11","2027-09-20","2027-09-23","2027-10-11","2027-11-03","2027-11-23",
+]);
+const isHoliday = (key) => HOLIDAYS_JP.has(key);
+
 // TODAY基準で YYYY-MM-DD を返す
 const dStr = (offset = 0) => {
   const d = new Date(TODAY); d.setDate(d.getDate() + offset);
@@ -104,6 +115,7 @@ function makeSample() {
       work: "ShopServe トップページ改装・商品ページ改修", reward: 33000,
       status: "進行中", reply: "要返信", deadline: dStr(4),
       note: "Chatworkでやり取り。トップ改装の見積り交渉中。",
+      summary: "依頼：ShopServeのトップページ改装＋商品ページ改修。商品ページ改修は着手済み。トップ改装は提案済みで、先方が社内検討中。未決：改装の最終見積り金額と対応期間。",
       received: "お世話になっております。先日ご提案いただいたトップページ改装の件、社内で前向きに検討しております。改めてお見積りと、対応にかかる期間の目安を教えていただけますでしょうか。あわせて、商品ページの修正分は今週中に反映可能でしょうか。",
       replyDraft: "", repliedAt: null,
       replyUrl: "https://www.chatwork.com/",
@@ -119,6 +131,7 @@ function makeSample() {
       work: "WordPressサイトリニューアル", reward: 35000,
       status: "進行中", reply: "要返信", deadline: dStr(4),
       note: "クラウドワークス経由。メッセージで2件の確認待ち。",
+      summary: "NPOサイトのWordPressリニューアル。支給素材は反映済み。掲載写真の利用許諾と公開予定日が未確定で、先方の回答待ち。",
       received: "（別トーク）公開予定日についても、候補日をいくつかご提示いただけますでしょうか。",
       replyDraft: "", repliedAt: null,
       replyUrl: "https://crowdworks.jp/mypage/messages",
@@ -135,6 +148,7 @@ function makeSample() {
       work: "住宅ECブログ執筆（note・楽天、週2〜3本）", reward: 0,
       status: "進行中", reply: "要返信", deadline: dStr(2),
       note: "継続案件。1通のメッセージで2用件 → 返信は1件にまとめる。",
+      summary: "継続のブログ執筆案件（note・楽天、週2〜3本）。テーマは先方と都度すり合わせ。これまで住宅系の記事を継続納品。トーンは読みやすい実用記事。",
       received: "２点ご連絡です。①次回のnote記事のテーマは「狭小住宅の収納術」で進めていただけますか。②前回の楽天記事、見出しを2つ追加でご対応お願いできますか。お手すきにご返信ください。",
       replyDraft: "", repliedAt: null,
       replyUrl: "https://www.chatwork.com/",
@@ -162,6 +176,7 @@ function makeSample() {
       work: "LP制作（PhotoIUPAC 2028 ほか）", reward: 0,
       status: "進行中", reply: "要返信", deadline: dStr(6),
       note: "別トークで2件の問い合わせ（配色の相談・別件の見積り依頼）→ 返信は2件。",
+      summary: "PhotoIUPAC 2028のLP制作が主案件。初稿提出済みで配色を調整中。別途、日本超特価部品のデモサイトで追加ページの相談が来ている。",
       received: "（別件のご相談です）日本超特価部品のデモサイトについて、別ページの追加分のお見積りをお願いできますでしょうか。",
       replyDraft: "", repliedAt: null,
       replyUrl: "https://www.chatwork.com/",
@@ -191,6 +206,7 @@ function makeSample() {
       work: "Chatworkリマインダーツール（テスト案件）", reward: 0,
       status: "進行中", reply: "要返信", deadline: dStr(2),
       note: "GAS開発。Chatworkで2件のやり取り。",
+      summary: "Chatworkリマインダーツールのテスト案件。GASで試作を提供しテスト中。検知タイミングと文面テンプレートが論点。",
       received: "（別トーク）リマインダーの文面テンプレートについてもご相談したく、ご返信ください。",
       replyDraft: "", repliedAt: null,
       replyUrl: "https://www.chatwork.com/",
@@ -294,7 +310,7 @@ function laneFromDue(due) {
 function normalizeProjects(arr) {
   let list = arr.map((p) => ({
     ...p,
-    received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [],
+    received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
     tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "" })),
   }));
   if (!list.some((p) => p.id === INBOX_ID)) list = [...list, makeInbox()];
@@ -528,7 +544,7 @@ function FocusView({ kpi, projects, onOpen }) {
           {openCard === "reply" && replyEntries.map(({ p, t }) => (
             <div key={t.id} style={S.replyItemWrap}>
               <div style={S.replyItem}>
-                <button style={S.replyItemMain} onClick={() => setOpenMsg(openMsg === t.id ? null : t.id)}>
+                <button style={S.replyItemMain} onClick={() => onOpen(p)}>
                   <PlatformChip name={p.platform} small />
                   <span style={S.replyItemCol}>
                     <span style={S.replyItemName}>{p.company}</span>
@@ -1096,15 +1112,38 @@ function Drawer({ draft, onClose, onSave, onDelete, confirmDel, onConfirmDelete,
     if (!d.received.trim()) { setGenError("先に相手から届いたメッセージを貼り付けてください。"); return; }
     setGenerating(true); setGenError("");
     try {
+      // 直近の文脈（過去3往復まで）を渡す。古い順に並べる
+      const hist = (d.replyHistory || []).slice(0, 3).reverse();
+      const histText = hist.length
+        ? "# これまでのやり取り（古い順・文脈把握用）\n" + hist.map((h, i) =>
+            `[${i + 1}] 相手: ${(h.received || "（記録なし）")}\n    自分(送信済み): ${(h.reply || "（記録なし）")}`).join("\n") + "\n\n"
+        : "";
       const text = await callClaude({
         maxTokens: 1200,
-        system: "あなたはフリーランス「インフォサクセスの高崎」のアシスタントです。受け取ったメッセージへの返信文を、高崎本人が送る前提で作成します。丁寧でビジネスライクな日本語。\n\n【重要】メッセージに複数の用件・質問・依頼が含まれている場合は、そのすべてに漏れなく一通の返信で答えること。論点が複数あるときは、相手が読みやすいよう、必要に応じて改行や箇条書き（「・」）で整理して、どの用件への回答かが明確に分かるようにする。確認が必要な点や即答できない点は、憶測で埋めず「確認のうえ改めてご連絡します」等と添える。\n\n出力はそのまま送れる返信本文のみ。マークダウンの見出し記法や「返信案：」等の前置き・署名は付けない。",
-        user: `# 案件情報\n会社/クライアント: ${d.company || "（未設定）"}\n契約先: ${d.platform}\n業務内容: ${d.work || "（未設定）"}\nメモ: ${d.note || "（なし）"}\n\n# 相手から届いたメッセージ（複数の用件が含まれる場合があります）\n${d.received}\n\n上記メッセージのすべての用件に漏れなく答える返信文を作成してください。`,
+        system: "あなたはフリーランス「インフォサクセスの高崎」のアシスタントです。受け取ったメッセージへの返信文を、高崎本人が送る前提で作成します。丁寧でビジネスライクな日本語。\n\n【文脈】案件の経緯メモと、これまでのやり取りが渡された場合は、その流れ・経緯・すでに合意済みの事項を踏まえて、ちぐはぐにならない自然な返信にすること。過去に答えた内容を繰り返しすぎない。初回の返信でも、経緯メモと業務内容から状況を把握して適切に応じる。\n\n【重要】今回のメッセージに複数の用件・質問・依頼が含まれている場合は、そのすべてに漏れなく一通の返信で答えること。論点が複数あるときは、相手が読みやすいよう、必要に応じて改行や箇条書き（「・」）で整理して、どの用件への回答かが明確に分かるようにする。確認が必要な点や即答できない点は、憶測で埋めず「確認のうえ改めてご連絡します」等と添える。\n\n出力はそのまま送れる返信本文のみ。マークダウンの見出し記法や「返信案：」等の前置き・署名は付けない。",
+        user: `# 案件情報\n会社/クライアント: ${d.company || "（未設定）"}\n契約先: ${d.platform}\n業務内容: ${d.work || "（未設定）"}\nメモ: ${d.note || "（なし）"}\n\n# 案件の経緯メモ\n${d.summary || "（なし）"}\n\n${histText}# 今回 相手から届いたメッセージ\n${d.received}\n\n上記の経緯と文脈を踏まえ、今回のメッセージのすべての用件に漏れなく答える返信文を作成してください。`,
       });
       set("replyDraft", text || "(生成できませんでした。もう一度お試しください)");
     } catch {
       setGenError("生成に失敗しました。通信状況・APIキー設定をご確認ください。");
     } finally { setGenerating(false); }
+  }
+
+  const [summarizing, setSummarizing] = useState(false);
+  async function summarizeContext() {
+    setSummarizing(true); setGenError("");
+    try {
+      const hist = (d.replyHistory || []).slice().reverse();
+      const histText = hist.map((h) => `相手: ${h.received || "（記録なし）"}\n自分: ${h.reply || "（記録なし）"}`).join("\n");
+      const text = await callClaude({
+        maxTokens: 400,
+        system: "案件の経緯を簡潔にまとめるアシスタントです。依頼内容・決まったこと・未決事項・相手の要望を、箇条書き中心で200字程度に整理します。憶測は加えず、与えられた情報だけを使う。出力は経緯メモ本文のみ。",
+        user: `# 案件\n会社: ${d.company || "（未設定）"}\n業務: ${d.work || "（未設定）"}\nメモ: ${d.note || "（なし）"}\n\n# これまでの経緯メモ\n${d.summary || "（なし）"}\n\n# やり取り履歴\n${histText || "（なし）"}\n\n# 直近の受信メッセージ\n${d.received || "（なし）"}\n\n上記から最新の経緯メモを作成してください。`,
+      });
+      if (text) set("summary", text);
+    } catch {
+      setGenError("経緯のまとめに失敗しました。通信状況・APIキー設定をご確認ください。");
+    } finally { setSummarizing(false); }
   }
 
   async function extractTasks() {
@@ -1291,6 +1330,15 @@ function Drawer({ draft, onClose, onSave, onDelete, confirmDel, onConfirmDelete,
               onChange={(e) => set("note", e.target.value)} />
           </Field>
 
+          <Field label="案件の経緯メモ（返信生成の文脈に使用）">
+            <textarea style={{ ...S.input, minHeight: 60, resize: "vertical" }} value={d.summary}
+              placeholder="依頼内容・決まったこと・未決事項など。ここに書いた経緯を踏まえて返信案を作ります。"
+              onChange={(e) => set("summary", e.target.value)} />
+            <button style={{ ...S.summaryBtn, ...(summarizing ? S.genBtnBusy : {}) }} onClick={summarizeContext} disabled={summarizing}>
+              {summarizing ? <><span style={S.spinnerDark} />まとめ中…</> : <><Sparkles size={13} strokeWidth={2.4} />やり取りから経緯を自動でまとめる</>}
+            </button>
+          </Field>
+
           {/* ===== やり取り（AI返信案） ===== */}
           <div style={S.replyBlock}>
             <div style={S.replyBlockHead}>
@@ -1326,7 +1374,7 @@ function Drawer({ draft, onClose, onSave, onDelete, confirmDel, onConfirmDelete,
                 {extracting ? <><span style={S.spinnerDark} />抽出中…</> : <><ListPlus size={14} strokeWidth={2.4} />やることを抽出</>}
               </button>
             </div>
-            <div style={S.assistNote}>メッセージに用件が複数あっても、すべてに漏れなく答える1通の返信案を作成します。「やることを抽出」は対応すべきことをタスク化します。</div>
+            <div style={S.assistNote}>これまでのやり取り（直近3往復）の文脈を踏まえ、用件が複数あってもすべてに漏れなく答える1通の返信案を作成します。「やることを抽出」は対応すべきことをタスク化します。</div>
             {extractMsg && <div style={S.extractMsg}>{extractMsg}</div>}
             {genError && <div style={S.genError}>{genError}</div>}
 
@@ -1557,11 +1605,12 @@ function CalendarView({ projects, onOpen }) {
           const isToday = k === todayKey;
           const isSel = k === selected;
           const dow = i % 7;
+          const holiday = isHoliday(k);
           const dots = [...new Set(items.map((it) => it.color))].slice(0, 4);
           return (
             <button key={i} onClick={() => setSelected(k)}
               style={{ ...S.calCell, ...(isSel ? S.calCellSel : {}) }}>
-              <span style={{ ...S.calDay, color: isToday ? "#fff" : dow === 0 ? "#FF6B6B" : dow === 6 ? "#2DD4BF" : C.ink, ...(isToday ? S.calDayToday : {}) }}>{dd}</span>
+              <span style={{ ...S.calDay, color: isToday ? "#fff" : (dow === 0 || holiday) ? "#FF6B6B" : dow === 6 ? "#2DD4BF" : C.ink, ...(isToday ? S.calDayToday : {}) }}>{dd}</span>
               <span style={S.calDots}>
                 {dots.map((c, j) => <span key={j} style={{ ...S.calDot, background: c }} />)}
               </span>
@@ -1635,7 +1684,7 @@ function urlHint(platform) {
 function linkInfo(url) {
   if (!url) return null;
   if (url.includes("chatwork")) return { label: "Chatworkを開く", short: "Chatwork", color: "#FF9F43" };
-  if (url.includes("crowdworks")) return { label: "クラウドワークスを開く", short: "クラウドワークス", color: "#54B8F0" };
+  if (url.includes("crowdworks")) return { label: "クラウドワークスを開く", short: "CW", color: "#54B8F0" };
   if (url.includes("lancers")) return { label: "ランサーズを開く", short: "ランサーズ", color: "#54B8F0" };
   if (url.includes("coconala")) return { label: "ココナラを開く", short: "ココナラ", color: "#FF8A5B" };
   return { label: "返信先を開く", short: "開く", color: C.accent };
@@ -1643,7 +1692,7 @@ function linkInfo(url) {
 function blankDraft() {
   return { id: uid(), company: "", platform: "クラウドワークス", work: "", reward: "",
     status: "進行中", reply: "なし", deadline: "", note: "",
-    received: "", replyDraft: "", repliedAt: null, replyUrl: "", replyHistory: [], tasks: [] };
+    received: "", replyDraft: "", repliedAt: null, replyUrl: "", replyHistory: [], summary: "", tasks: [] };
 }
 function Fonts() {
   return (<style>{`
@@ -1736,11 +1785,11 @@ const S = {
   replyPanelTitle: { fontFamily: F.disp, fontWeight: 700, fontSize: 14.5, color: C.ink },
   replyPanelClose: { marginLeft: 4, border: "none", background: "transparent", color: C.ink3, display: "flex", padding: 2 },
   replyPanelEmpty: { fontSize: 14.5, color: C.ink3, padding: "6px 2px" },
-  replyItem: { display: "flex", alignItems: "center", gap: 8, background: C.panel2, borderRadius: 10, padding: "9px 11px" },
-  replyItemMain: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, border: "none", background: "transparent", padding: 0, textAlign: "left" },
+  replyItem: { display: "flex", alignItems: "center", gap: 8, background: C.panel2, borderRadius: 10, padding: "9px 11px", minWidth: 0 },
+  replyItemMain: { flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, border: "none", background: "transparent", padding: 0, textAlign: "left", overflow: "hidden" },
   replyItemCol: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 },
   replyItemSub: { fontSize: 12, color: C.ink2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  replyItemMetaRow: { display: "flex", alignItems: "center", gap: 10 },
+  replyItemMetaRow: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
   replyItemWrap: { display: "flex", flexDirection: "column", gap: 0 },
   msgToggle: { display: "flex", alignItems: "center", gap: 4, border: "none", background: "transparent", color: C.ink3, fontSize: 11.5, fontWeight: 600, padding: "5px 2px 2px 4px", textAlign: "left" },
   msgQuote: { background: C.panel2, borderRadius: 10, padding: 12, marginTop: 4, display: "flex", flexDirection: "column", gap: 7, borderLeft: "3px solid rgba(255,146,43,0.5)" },
@@ -1750,7 +1799,7 @@ const S = {
   replyItemReward: { fontFamily: F.disp, fontSize: 13, fontWeight: 700, color: C.ink2 },
   replyItemDueSub: { fontSize: 12, fontWeight: 700, fontFamily: F.disp },
   replyItemName: { fontWeight: 700, fontSize: 14, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  replyItemLink: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 14.5, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.16)", padding: "5px 10px", borderRadius: 8, textDecoration: "none", flexShrink: 0 },
+  replyItemLink: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12.5, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.16)", padding: "6px 11px", borderRadius: 8, textDecoration: "none", flexShrink: 0, whiteSpace: "nowrap" },
 
   kpiRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(158px, 1fr))", gap: 12 },
   kpiCard: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 16, padding: "16px 17px", textAlign: "left", width: "100%" },
@@ -1949,6 +1998,7 @@ const S = {
   /* assist buttons */
   assistBtnRow: { display: "flex", gap: 8 },
   assistNote: { fontSize: 11.5, color: C.ink3, lineHeight: 1.5 },
+  summaryBtn: { marginTop: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", border: `1px solid ${C.line}`, background: C.panel, color: C.ink2, borderRadius: 9, padding: "9px 12px", fontSize: 12.5, fontWeight: 700 },
   extractBtn: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, border: `1px solid ${C.line}`, background: C.panel, color: C.ink, borderRadius: 9, padding: "10px 12px", fontSize: 14.5, fontWeight: 700 },
   spinnerDark: { width: 13, height: 13, border: "2px solid rgba(24,27,34,0.25)", borderTopColor: C.ink, borderRadius: "50%", display: "inline-block", animation: "spin 0.7s linear infinite" },
   extractMsg: { fontSize: 14, color: "#51CF66", background: "rgba(81,207,102,0.15)", border: "1px solid #2E5E3F", borderRadius: 8, padding: "8px 10px" },
