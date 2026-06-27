@@ -913,7 +913,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onCha
           const over = overTab === L.key;
           return (
             <button key={L.key} data-lane={L.key}
-              style={{ ...S.taskTab, ...(active ? S.taskTabOn : {}), ...(over ? { background: L.tint } : {}) }}
+              style={{ ...S.taskTab, ...(active ? S.taskTabOn : {}), ...(over ? S.taskTabOver : {}) }}
               onClick={() => setActiveLane(L.key)}
               onDragOver={(e) => { e.preventDefault(); if (overTab !== L.key) setOverTab(L.key); }}
               onDragLeave={() => setOverTab((o) => (o === L.key ? null : o))}
@@ -922,10 +922,8 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onChangeLane, onCha
                 try { const d = JSON.parse(e.dataTransfer.getData("text/plain")); if (d && d.tid) onChangeLane(d.pid, d.tid, L.key); } catch {}
                 setOverTab(null);
               }}>
-              <span style={{ ...S.taskTabDot, background: L.color, opacity: active ? 1 : 0.5 }} />
               <span>{L.label}</span>
-              <span style={{ ...S.taskTabCount, ...(active ? { background: L.color, color: "#fff" } : {}) }}>{countOf(L.key)}</span>
-              {active && <span style={{ ...S.taskTabBar, background: L.color }} />}
+              <span style={{ ...S.taskTabCount, ...(active ? S.taskTabCountOn : {}) }}>{countOf(L.key)}</span>
             </button>
           );
         })}
@@ -2095,11 +2093,13 @@ const S = {
   kanbanHint: { fontSize: 12, color: C.ink3, fontWeight: 500 },
 
   /* task tabs (Googleタスク風) */
-  taskTabs: { display: "flex", gap: 2, overflowX: "auto", borderBottom: `1.5px solid ${C.line}`, marginBottom: 2 },
-  taskTab: { position: "relative", display: "flex", alignItems: "center", gap: 6, flexShrink: 0, border: "none", background: "transparent", padding: "11px 14px 13px", fontSize: 14.5, fontWeight: 600, color: C.ink2, whiteSpace: "nowrap", borderRadius: "8px 8px 0 0" },
-  taskTabOn: { color: C.ink, fontWeight: 700 },
+  taskTabs: { display: "flex", gap: 7, overflowX: "auto", marginBottom: 14, paddingBottom: 2 },
+  taskTab: { position: "relative", display: "flex", alignItems: "center", gap: 7, flexShrink: 0, border: `1px solid ${C.line}`, background: C.panel2, padding: "9px 14px", fontSize: 14, fontWeight: 700, color: C.ink2, whiteSpace: "nowrap", borderRadius: 10 },
+  taskTabOn: { background: C.accent, borderColor: C.accent, color: "#fff" },
+  taskTabOver: { borderColor: C.accent, background: "rgba(107,138,255,0.18)" },
   taskTabDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
-  taskTabCount: { fontFamily: F.disp, fontSize: 11.5, fontWeight: 700, padding: "1px 7px", borderRadius: 20, background: "#2A323D", color: C.ink2, minWidth: 18, textAlign: "center" },
+  taskTabCount: { fontFamily: F.disp, fontSize: 11.5, fontWeight: 800, padding: "1px 7px", borderRadius: 20, background: "#161A20", color: C.ink2, minWidth: 18, textAlign: "center" },
+  taskTabCountOn: { background: "rgba(255,255,255,0.25)", color: "#fff" },
   taskTabBar: { position: "absolute", left: 10, right: 10, bottom: -1.5, height: 2.5, borderRadius: 2 },
 
   laneBar: { display: "flex", alignItems: "center", gap: 9 },
