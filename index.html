@@ -470,6 +470,8 @@ export default function App() {
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: [...p.tasks, { id: uid(), title, done: false, due: "", start: "", lane, kind: "task" }],
     }));
+  const setDeadline = (pid, deadline) =>
+    persist(projects.map((p) => p.id !== pid ? p : { ...p, deadline }));
 
   /* ---- derived ---- */
   const active = useMemo(() => projects.filter((p) => p.status !== "完了" && p.id !== INBOX_ID), [projects]);
@@ -526,7 +528,7 @@ export default function App() {
         <div style={S.viewDots}>
           {VIEWS.map((v) => <span key={v} style={{ ...S.viewDot, ...(view === v ? S.viewDotOn : {}) }} />)}
         </div>
-        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} />}
+        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} />}
         {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onChangeLane={changeLane} onChangeDue={changeDue} onAddTask={addTaskToLane} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={setEditing} />}
       </main>
@@ -555,7 +557,7 @@ export default function App() {
 /* ============================================================
    フォーカス（ダッシュボード）
    ============================================================ */
-function FocusView({ kpi, projects, allProjects, onOpen }) {
+function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
   const [fPlat, setFPlat] = useState("すべて");
@@ -731,7 +733,7 @@ function FocusView({ kpi, projects, allProjects, onOpen }) {
         </div>
         {cardList.length === 0 && <Empty text="条件に合う案件がありません。" />}
         <div style={S.grid}>
-          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} />)}
+          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onAddTask={onAddTask} />)}
         </div>
       </section>
     </div>
@@ -812,16 +814,18 @@ function ProjectsView({ projects, onOpen }) {
 
       {filtered.length === 0 && <Empty text="条件に合う案件がありません。" />}
       <div style={S.grid}>
-        {filtered.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} />)}
+        {filtered.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onAddTask={onAddTask} />)}
       </div>
     </div>
   );
 }
 
-function ProjectCard({ p, onOpen }) {
+function ProjectCard({ p, onOpen, onSetDeadline, onAddTask }) {
   const replyN = replyTasksOf(p).length;
   const li = linkInfo(p.replyUrl);
   const dl = p.deadline ? dateLabelJP(p.deadline) : null;
+  const [adding, setAdding] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
   const openTasks = p.tasks
     .filter((t) => !t.done && t.kind !== "reply")
     .sort((a, b) => {
@@ -832,10 +836,11 @@ function ProjectCard({ p, onOpen }) {
     });
   const showTasks = openTasks.slice(0, 4);
   const moreTasks = openTasks.length - showTasks.length;
-  const total = p.tasks.filter((t) => t.kind !== "reply").length;
-  const done = p.tasks.filter((t) => t.kind !== "reply" && t.done).length;
+  const stop = (e) => e.stopPropagation();
+  const openPicker = (e) => { e.stopPropagation(); const inp = e.currentTarget.querySelector("input"); try { inp && inp.showPicker && inp.showPicker(); } catch {} };
+  const submitTask = () => { const t = newTitle.trim(); if (t) { onAddTask && onAddTask(p.id, "later", t); setNewTitle(""); } };
   return (
-    <button style={S.card} onClick={() => onOpen(p)}>
+    <div style={S.card} role="button" tabIndex={0} onClick={() => onOpen(p)}>
       {replyN > 0 && (
         <div style={S.cardHead}>
           <span style={S.cardReplyPill}><Reply size={12} strokeWidth={2.4} />要返信{replyN}</span>
@@ -845,13 +850,15 @@ function ProjectCard({ p, onOpen }) {
       <div style={S.cardCompany}>{p.company}</div>
 
       <div style={S.cardMetaLine}>
-        {dl && (
-          <span style={{ ...S.cardDeadlineSub, ...(dl.overdue ? S.cardDeadlineOver : {}) }}>納期 {dl.text}</span>
-        )}
+        <label style={{ ...S.cardDeadlineSub, ...(dl && dl.overdue ? S.cardDeadlineOver : {}), ...(dl ? {} : S.cardDeadlineEmpty) }} onClick={openPicker}>
+          {dl ? `納期 ${dl.text}` : "＋ 納期を設定"}
+          <input type="date" value={p.deadline || ""} style={S.cardDateHidden}
+            onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />
+        </label>
         <span style={S.cardReward}>{yen(Number(p.reward))}</span>
       </div>
 
-      {showTasks.length > 0 && (
+      {(showTasks.length > 0 || adding) && (
         <div style={S.cardTaskList}>
           {showTasks.map((t) => {
             const lab = dateLabelJP(taskJudgeDate(t));
@@ -864,19 +871,34 @@ function ProjectCard({ p, onOpen }) {
             );
           })}
           {moreTasks > 0 && <div style={S.cardTaskMore}>ほか {moreTasks} 件</div>}
+          {adding && (
+            <div style={S.cardAddRow} onClick={stop}>
+              <input autoFocus style={S.cardAddInput} value={newTitle} placeholder="やることを入力"
+                onChange={(e) => setNewTitle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); submitTask(); } }} />
+              <button style={S.cardAddDone} onClick={submitTask}>追加</button>
+              <button style={S.cardAddCancel} onClick={() => { setAdding(false); setNewTitle(""); }}>×</button>
+            </div>
+          )}
         </div>
       )}
 
-      {li && (
-        <div style={S.cardFoot}>
+      <div style={S.cardFoot}>
+        {!adding && (
+          <button style={S.cardAddTaskBtn} onClick={(e) => { stop(e); setAdding(true); }}>
+            <Plus size={15} strokeWidth={2.4} />タスクを追加
+          </button>
+        )}
+        <div style={{ flex: 1 }} />
+        {li && (
           <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
             style={{ ...S.openLinkCard, color: li.color, background: li.color + "22" }}
-            onClick={(e) => e.stopPropagation()} title={li.label}>
+            onClick={stop} title={li.label}>
             <ExternalLink size={13} strokeWidth={2.4} />{li.short}
           </a>
-        </div>
-      )}
-    </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1446,11 +1468,6 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
             <div style={S.parseBoxHead}>
               <Sparkles size={14} color={C.accent} strokeWidth={2.3} />
               <span style={S.parseBoxTitle}>貼り付けて{isNew ? "自動入力" : "再読み取り"}</span>
-            </div>
-            <div style={S.parseHint}>
-              {isNew
-                ? "募集文や、クライアントとのやり取り画面を丸ごと貼り付けると、会社名・契約先・業務・報酬・期限に加え、最新の未返信メッセージと、これまでの経緯メモを自動で読み取って入力します。"
-                : "やり取り画面を丸ごと貼り付けると、最新の未返信メッセージを「届いたメッセージ」に、これまでの流れを「経緯メモ」にまとめて取り込みます。空欄は自動入力し、既存の値と異なる項目は上書き前に確認します。"}
             </div>
             <textarea style={{ ...S.input, minHeight: 70, resize: "vertical" }} value={pasteText}
               placeholder="募集文・メッセージなどをそのまま貼り付け"
@@ -2153,8 +2170,10 @@ const S = {
   cardCompany: { fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, lineHeight: 1.3, marginBottom: 8 },
   cardWork: { display: "none" },
   cardMetaLine: { display: "flex", alignItems: "baseline", gap: 10 },
-  cardDeadlineSub: { fontSize: 14, color: C.ink2, fontWeight: 600 },
+  cardDeadlineSub: { position: "relative", fontSize: 14.5, color: C.ink2, fontWeight: 600, cursor: "pointer" },
   cardDeadlineOver: { color: "#FF8A8A" },
+  cardDeadlineEmpty: { color: C.ink3 },
+  cardDateHidden: { position: "absolute", left: 0, bottom: 0, width: 1, height: 1, opacity: 0, pointerEvents: "none" },
   cardMetaRow: { display: "none" },
   cardReward: { fontFamily: F.disp, fontWeight: 800, fontSize: 16, fontVariantNumeric: "tabular-nums", letterSpacing: 0.3, color: C.ink2, marginLeft: "auto" },
   cardDue: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
@@ -2162,12 +2181,17 @@ const S = {
   cardTaskList: { display: "flex", flexDirection: "column", gap: 10, marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.line}` },
   cardTaskRow: { display: "flex", alignItems: "center", gap: 10 },
   cardTaskDot: { width: 7, height: 7, borderRadius: "50%", border: `1.5px solid ${C.ink3}`, flexShrink: 0 },
-  cardTaskTitle: { flex: 1, minWidth: 0, fontSize: 14.5, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  cardTaskDate: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: C.ink2 },
-  cardTaskOver: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: "#FF8A8A", background: "rgba(255,107,107,0.13)", padding: "2px 9px", borderRadius: 7 },
+  cardTaskTitle: { flex: 1, minWidth: 0, fontSize: 15, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  cardTaskDate: { fontSize: 14.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: C.ink2 },
+  cardTaskOver: { fontSize: 14.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: "#FF8A8A", background: "rgba(255,107,107,0.13)", padding: "2px 9px", borderRadius: 7 },
   cardTaskDue: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0 },
   cardTaskMore: { fontSize: 14, color: C.ink3, fontWeight: 600, paddingLeft: 17 },
+  cardAddRow: { display: "flex", alignItems: "center", gap: 7 },
+  cardAddInput: { flex: 1, minWidth: 0, background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 8, padding: "8px 10px", fontSize: 14.5, color: C.ink },
+  cardAddDone: { border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "8px 14px", fontSize: 14, fontWeight: 700, flexShrink: 0 },
+  cardAddCancel: { border: "none", background: "transparent", color: C.ink3, fontSize: 18, fontWeight: 700, padding: "0 4px", flexShrink: 0 },
   cardFoot: { display: "flex", alignItems: "center", gap: 8, paddingTop: 13, marginTop: 14, borderTop: `1px solid ${C.line}` },
+  cardAddTaskBtn: { display: "inline-flex", alignItems: "center", gap: 5, border: `1px solid ${C.line}`, background: C.panel2, color: C.ink2, borderRadius: 9, padding: "7px 12px", fontSize: 13.5, fontWeight: 700 },
   cardTasksCount: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, color: C.ink3, fontWeight: 700, fontFamily: F.disp },
   cardTasks: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, color: C.ink3, fontWeight: 600, marginLeft: "auto", fontFamily: F.disp },
 
