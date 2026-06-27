@@ -109,7 +109,7 @@ const REPLIES = ["なし", "要返信", "返信済み", "相手待ち"];
 
 const TASK_LANES = [
   { key: "today",   label: "今日",       color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
-  { key: "later",   label: "明日",       color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
+  { key: "later",   label: "明日以降",   color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
   { key: "waiting", label: "相手待ち",   color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
   { key: "payment", label: "支払い待ち", color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
 ];
@@ -341,6 +341,16 @@ export default function App() {
       }
     }, 1200);
   };
+
+  /* ---- ブラウザの「引っ張って更新」を抑制（下スワイプで誤更新しないように） ---- */
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const html = document.documentElement, body = document.body;
+    const prevH = html.style.overscrollBehaviorY, prevB = body.style.overscrollBehaviorY;
+    html.style.overscrollBehaviorY = "contain";
+    body.style.overscrollBehaviorY = "contain";
+    return () => { html.style.overscrollBehaviorY = prevH; body.style.overscrollBehaviorY = prevB; };
+  }, []);
 
   /* ---- load ---- */
   useEffect(() => {
@@ -2151,7 +2161,7 @@ const S = {
   focusDateLabel: { fontSize: 13.5, color: C.ink2, fontWeight: 600, flexShrink: 0 },
   focusDateInput: { flex: 1, minWidth: 0, border: `1px solid ${C.line}`, background: C.panel2, color: C.ink, borderRadius: 8, padding: "7px 9px", fontSize: 13.5 },
   focusTaskNote: { fontSize: 13.5, color: C.ink3 },
-  drawerBody: { flex: 1, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 14 },
+  drawerBody: { flex: 1, overflowY: "auto", overscrollBehavior: "contain", padding: 18, display: "flex", flexDirection: "column", gap: 14 },
   drawerFoot: { display: "flex", alignItems: "center", gap: 8, padding: "13px 18px", borderTop: `1px solid ${C.line}`, background: C.panel },
 
   field: { display: "flex", flexDirection: "column", gap: 6 },
