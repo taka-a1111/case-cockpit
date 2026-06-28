@@ -1071,7 +1071,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
                 </button>
                 <span style={S.cardTaskTitle}>{t.title || "（無題）"}</span>
                 {lab && <span style={lab.overdue ? S.cardTaskOver : S.cardTaskDate}
-                  onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "date"); }}>{lab.text}</span>}
+                  onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "title"); }}>{lab.text}</span>}
               </div>
             );
           })}
@@ -1241,7 +1241,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
   const lab = judge ? dateLabelJP(judge) : null;
   const jn = judge ? daysUntil(judge) : null;
   // 赤は「期限超過」のみ。今日は青、それ以外はグレー
-  const chipColor = jn === null ? C.ink3 : (jn < 0 ? "#FF6B6B" : jn === 0 ? C.accent : C.ink2);
+  const chipColor = jn === null ? C.ink3 : (jn < 0 ? "#FF6B6B" : C.ink2);
   const [dueOpen, setDueOpen] = useState(false);
   const dStrLocal = (off) => { const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + off); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
   const quick = [
@@ -1284,7 +1284,6 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
         </div>
         <div style={S.tcardMeta}>
           <span style={S.tcardProject}>
-            <PlatformChip name={t.project.platform} small />
             <span style={S.tcardCompany}>{t.project.company}</span>
           </span>
           {t.kind === "reply" && !t.done && <span style={{ ...S.dueMini, color: "#6B8AFF" }}>本日中</span>}
@@ -2464,7 +2463,7 @@ const S = {
   cardReward: { fontFamily: F.disp, fontWeight: 800, fontSize: 16, fontVariantNumeric: "tabular-nums", letterSpacing: 0.3, color: C.ink2, marginLeft: "auto" },
   cardDue: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
   cardDueNone: { display: "none" },
-  cardTaskList: { display: "flex", flexDirection: "column", gap: 10, marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.line}` },
+  cardTaskList: { display: "flex", flexDirection: "column", gap: 13, marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.line}` },
   cardTaskRow: { display: "flex", alignItems: "center", gap: 12, cursor: "pointer" },
   cardTaskCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
   cardTaskEdit: { display: "flex", flexDirection: "column", gap: 8, padding: "10px 11px", background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 10 },
@@ -2475,9 +2474,9 @@ const S = {
   cardTaskEditDate: { width: "100%", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 8px", fontSize: 14, color: C.ink2 },
   cardTaskEditDone: { border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "9px 16px", fontSize: 14, fontWeight: 700, flexShrink: 0 },
   cardTaskDot: { width: 7, height: 7, borderRadius: "50%", border: `1.5px solid ${C.ink3}`, flexShrink: 0 },
-  cardTaskTitle: { flex: 1, minWidth: 0, fontSize: 15, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  cardTaskDate: { fontSize: 14.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: C.ink2 },
-  cardTaskOver: { fontSize: 14.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: "#FF8A8A", background: "rgba(255,107,107,0.13)", padding: "2px 9px", borderRadius: 7 },
+  cardTaskTitle: { flex: 1, minWidth: 0, fontSize: 16.5, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  cardTaskDate: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: C.ink2 },
+  cardTaskOver: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: "#FF8A8A", background: "rgba(255,107,107,0.13)", padding: "2px 9px", borderRadius: 7 },
   cardTaskDue: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0 },
   cardTaskMore: { fontSize: 14, color: C.ink3, fontWeight: 600, paddingLeft: 17 },
   cardAddRow: { display: "flex", alignItems: "center", gap: 7 },
@@ -2554,14 +2553,14 @@ const S = {
 
   taskBlockHead: { display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
   addTaskBtn: { display: "flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, background: C.panel, borderRadius: 8, padding: "5px 9px", fontSize: 14, fontWeight: 700, color: C.ink2 },
-  taskEditList: { display: "flex", flexDirection: "column", gap: 10 },
+  taskEditList: { display: "flex", flexDirection: "column", gap: 13 },
   taskEmpty: { fontSize: 14, color: C.ink3, padding: "4px 2px" },
   taskEditRow: { display: "flex", flexDirection: "column", gap: 7, padding: "10px 11px", background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 11 },
   taskEditTop: { display: "flex", alignItems: "center", gap: 7 },
   taskEditDates: { display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 },
   taskDateField: { flex: 1, display: "flex", flexDirection: "column", gap: 3 },
   taskDateLabel: { fontSize: 13, fontWeight: 700, color: C.ink3 },
-  taskInput: { flex: 1, minWidth: 0, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 9px", fontSize: 14.5 },
+  taskInput: { flex: 1, minWidth: 0, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 10px", fontSize: 16 },
   taskNoteInput: { width: "100%", marginLeft: 28, marginTop: 4, boxSizing: "border-box", maxWidth: "calc(100% - 28px)", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "6px 9px", fontSize: 13.5, color: C.ink2, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, outline: "none" },
   repeatRow: { display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 },
   repeatAdd: { border: "none", background: "transparent", color: C.ink3, fontSize: 14, fontWeight: 600, padding: "2px 0" },
@@ -2645,8 +2644,8 @@ const S = {
   tcardDone: { opacity: 0.62, cursor: "default" },
   tcardTitle: { fontSize: 16.5, fontWeight: 700, lineHeight: 1.4, color: C.ink, wordBreak: "break-word" },
   tcardMeta: { display: "flex", alignItems: "center", gap: 7, marginTop: 6, flexWrap: "wrap" },
-  tcardProject: { display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", padding: 0, fontSize: 14.5, color: C.ink2, fontWeight: 600, minWidth: 0 },
-  tcardCompany: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 130 },
+  tcardProject: { display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", padding: 0, fontSize: 15.5, color: C.ink2, fontWeight: 600, minWidth: 0 },
+  tcardCompany: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 },
   waitRowIcon: { fontSize: 16, lineHeight: "20px", flexShrink: 0, width: 20, textAlign: "center" },
   dueMini: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
 
@@ -2708,7 +2707,7 @@ const S = {
   taskGroup: { marginBottom: 18 },
   taskGroupHead: { display: "flex", alignItems: "center", gap: 9, border: "none", background: "transparent", padding: "4px 2px 10px", width: "100%", textAlign: "left", borderBottom: `1px solid ${C.line}`, marginBottom: 10 },
   taskGroupBar: { width: 4, height: 18, borderRadius: 3, flexShrink: 0 },
-  taskGroupName: { fontFamily: F.disp, fontWeight: 800, fontSize: 17, letterSpacing: 0.2, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  taskGroupName: { fontFamily: F.disp, fontWeight: 800, fontSize: 18, letterSpacing: 0.2, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   taskGroupCount: { fontFamily: F.disp, fontSize: 14, fontWeight: 800, color: "#fff", background: C.accent, borderRadius: 20, padding: "2px 9px", minWidth: 22, textAlign: "center", marginLeft: "auto", flexShrink: 0 },
 
   /* calendar */
@@ -2738,8 +2737,8 @@ const S = {
   calDetailItem: { display: "flex", alignItems: "center", gap: 10, background: C.panel2, border: "none", borderRadius: 10, padding: "11px 12px", textAlign: "left", width: "100%" },
   calDetailBar: { width: 4, alignSelf: "stretch", borderRadius: 3, flexShrink: 0 },
   calDetailCol: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 },
-  calDetailLabel: { minWidth: 0, fontSize: 15, fontWeight: 600, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  calDetailProject: { minWidth: 0, fontSize: 13, fontWeight: 600, color: C.ink3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  calDetailLabel: { minWidth: 0, fontSize: 16.5, fontWeight: 600, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  calDetailProject: { minWidth: 0, fontSize: 15, fontWeight: 600, color: C.ink3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   calDetailKind: { fontSize: 14, fontWeight: 700, flexShrink: 0 },
   movePopScrim: { position: "fixed", inset: 0, zIndex: 30 },
   movePop: { position: "absolute", top: 24, right: 0, zIndex: 31, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(20,24,40,0.16)", padding: 5, display: "flex", flexDirection: "column", gap: 2, minWidth: 130 },
