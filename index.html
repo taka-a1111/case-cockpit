@@ -48,6 +48,7 @@ import {
 
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
+const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -62,7 +63,10 @@ async function gasGet({ url, token }) {
   if (txt.trim().startsWith("<")) throw new Error("認証ページが返りました。デプロイのアクセス権を『全員』にし、URLが /exec で終わっているか確認してください");
   let j; try { j = JSON.parse(txt); } catch { throw new Error("応答を解析できません。URL末尾が /exec か確認してください"); }
   if (j && j.ok === false) throw new Error(j.error || "認証エラー（同期キーを確認してください）");
-  return Array.isArray(j) ? j : (j && j.data) ? j.data : null;
+  // 新形式 {ok,rev,data} / 旧形式 [] の両対応
+  if (Array.isArray(j)) return { rev: 0, data: j };
+  const data = Array.isArray(j.data) ? j.data : (j && j.data ? j.data : null);
+  return { rev: Number(j.rev) || 0, data };
 }
 // 保存はデータを分割してGETで送る（URLが長くなりすぎるのを防ぐ）。
 // エンコード後の長さで詰めるので、英数中心なら1〜数回で済み高速。
@@ -79,14 +83,15 @@ function chunkForUrl(json, maxEnc) {
   }
   return chunks.length ? chunks : [""];
 }
-async function gasPost({ url, token }, data) {
+async function gasPost({ url, token }, data, base) {
   const json = JSON.stringify(data);
   const parts = chunkForUrl(json, 6000); // エンコード後 約6000文字/回まで
   const total = parts.length;
   let last = null;
   for (let i = 0; i < total; i++) {
     const u = url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) +
-      "&action=save&seq=" + i + "&total=" + total + "&chunk=" + encodeURIComponent(parts[i]) + "&_=" + Date.now();
+      "&action=save&seq=" + i + "&total=" + total + "&base=" + (base || 0) +
+      "&chunk=" + encodeURIComponent(parts[i]) + "&_=" + Date.now();
     let res;
     try { res = await fetch(u, { method: "GET", redirect: "follow" }); }
     catch (e) { throw new Error("接続できません。URLが正しいか、デプロイのアクセス権が『全員』か確認してください"); }
@@ -94,8 +99,13 @@ async function gasPost({ url, token }, data) {
     if (txt.trim().startsWith("<")) throw new Error("認証ページが返りました。デプロイのアクセス権を『全員』にし、URLが /exec で終わっているか確認してください");
     try { last = JSON.parse(txt); } catch { throw new Error("応答を解析できません。GASを最新コードで再デプロイしたか確認してください"); }
     if (last && last.ok === false) throw new Error(last.error || "認証エラー（同期キーを確認してください）");
+    if (last && last.conflict) break; // 別端末が先に更新済み → 中断して取り込み
   }
-  return true;
+  if (last && last.conflict) {
+    const cdata = Array.isArray(last.data) ? last.data : (last.data || null);
+    return { conflict: true, rev: Number(last.rev) || 0, data: cdata };
+  }
+  return { conflict: false, rev: (last && last.rev != null) ? Number(last.rev) : (base || 0) };
 }
 
 const PLATFORMS = {
@@ -392,21 +402,71 @@ export default function App() {
   const [sync, setSync] = useState({ url: "", token: "", on: false });
   const [syncState, setSyncState] = useState({ status: "idle", at: null, msg: "" });
   const pushTimer = useRef(null);
+  const revRef = useRef(0);        // 直近にサーバと一致したリビジョン（楽観ロックの基準）
+  const dirtyRef = useRef(false);  // ローカルに未送信の変更があるか
+  const syncRef = useRef(sync);    // イベント内で最新の同期設定を参照
+  const projectsRef = useRef(projects);
+  const pullingRef = useRef(false);
+  useEffect(() => { syncRef.current = sync; }, [sync]);
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
 
-  // クラウドへ保存（デバウンス）
+  const saveMeta = async () => { try { await window.storage.set(META_KEY, JSON.stringify({ rev: revRef.current })); } catch {} };
+
+  // サーバのデータを正として取り込む
+  const adopt = async (data, rev) => {
+    const norm = normalizeProjects(data);
+    setProjects(norm); projectsRef.current = norm;
+    revRef.current = rev; dirtyRef.current = false;
+    try { await window.storage.set(STORE_KEY, JSON.stringify(norm)); } catch {}
+    saveMeta();
+  };
+
+  // クラウドへ保存（デバウンス）。別端末が先に更新していたらサーバ版を取り込む（消失防止）
   const pushCloud = (data, cfg) => {
-    const s = cfg || sync;
-    if (!s.on || !s.url) return;
+    const s = cfg || syncRef.current;
+    if (!s.on || !s.url || !s.token) return;
+    dirtyRef.current = true;
     if (pushTimer.current) clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(async () => {
       setSyncState((v) => ({ ...v, status: "syncing" }));
       try {
-        await gasPost(s, data);
-        setSyncState({ status: "ok", at: Date.now(), msg: "" });
+        const res = await gasPost(s, data, revRef.current);
+        if (res.conflict && res.data) {
+          await adopt(res.data, res.rev);
+          setSyncState({ status: "ok", at: Date.now(), msg: "別の端末の変更を反映しました" });
+        } else {
+          revRef.current = res.rev; dirtyRef.current = false; saveMeta();
+          setSyncState({ status: "ok", at: Date.now(), msg: "" });
+        }
       } catch (e) {
         setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) });
       }
-    }, 1200);
+    }, 1000);
+  };
+
+  // クラウドから取得し、サーバが新しければ取り込む（他端末の変更を反映）
+  const cloudPull = async (cfg, opts) => {
+    const s = cfg || syncRef.current;
+    const force = opts && opts.force;
+    if (!s.on || !s.url || !s.token) return;
+    if (pullingRef.current) return;
+    if (dirtyRef.current && !force) return; // 未送信のローカル変更がある間は上書きしない
+    pullingRef.current = true;
+    try {
+      const remote = await gasGet(s);
+      if (remote && remote.data) {
+        if (remote.rev > revRef.current) {
+          await adopt(remote.data, remote.rev);
+        } else if (remote.rev === revRef.current && !dirtyRef.current
+                   && JSON.stringify(normalizeProjects(remote.data)) !== JSON.stringify(projectsRef.current)) {
+          await adopt(remote.data, remote.rev); // 同リビジョンだが内容差あり→サーバ採用で収束
+        } else {
+          revRef.current = remote.rev; saveMeta();
+        }
+      }
+    } catch (e) {
+      setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) });
+    } finally { pullingRef.current = false; }
   };
 
   /* ---- ブラウザの「引っ張って更新」を抑制（下スワイプで誤更新しないように） ---- */
@@ -422,10 +482,11 @@ export default function App() {
   /* ---- load ---- */
   useEffect(() => {
     (async () => {
-      // 同期設定を読む
+      // 同期設定・リビジョンを読む
       let cfg = { url: "", token: "", on: false };
       try { const sr = await window.storage.get(SYNC_KEY); if (sr && sr.value) cfg = { ...cfg, ...JSON.parse(sr.value) }; } catch {}
-      setSync(cfg);
+      setSync(cfg); syncRef.current = cfg;
+      try { const mr = await window.storage.get(META_KEY); if (mr && mr.value) { const m = JSON.parse(mr.value); revRef.current = Number(m.rev) || 0; } } catch {}
 
       // まずローカルキャッシュで即表示（待たせない）
       let data = null;
@@ -434,17 +495,25 @@ export default function App() {
         data = normalizeProjects(makeSample());
         try { await window.storage.set(STORE_KEY, JSON.stringify(data)); } catch {}
       }
-      setProjects(normalizeProjects(data));
+      const localNorm = normalizeProjects(data);
+      setProjects(localNorm); projectsRef.current = localNorm;
       setLoading(false);
 
-      // 同期が有効なら、裏でクラウド取得して差し替え
+      // 同期が有効なら、サーバと突き合わせる
       if (cfg.on && cfg.url && cfg.token) {
         setSyncState({ status: "syncing", at: null, msg: "" });
         try {
           const remote = await gasGet(cfg);
-          if (remote) {
-            setProjects(normalizeProjects(remote));
-            try { await window.storage.set(STORE_KEY, JSON.stringify(remote)); } catch {}
+          if (remote && remote.data) {
+            if (remote.rev > revRef.current) {
+              await adopt(remote.data, remote.rev); // サーバが新しい→取り込む
+            } else if (JSON.stringify(normalizeProjects(remote.data)) !== JSON.stringify(localNorm)) {
+              pushCloud(localNorm, cfg); // ローカルに未送信の差分→送って同期
+            } else {
+              revRef.current = remote.rev; saveMeta();
+            }
+          } else {
+            pushCloud(localNorm, cfg); // サーバが空→ローカルを初期データとして送る
           }
           setSyncState({ status: "ok", at: Date.now(), msg: "" });
         } catch (e) {
@@ -454,31 +523,46 @@ export default function App() {
     })();
   }, []);
 
+  // 端末がアクティブになったら最新を取得。定期的（20秒）にも取得して常に最新を反映
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === "visible") cloudPull(); };
+    const onFocus = () => cloudPull();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onFocus);
+    const id = setInterval(() => { if (document.visibilityState === "visible") cloudPull(); }, 20000);
+    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onFocus); clearInterval(id); };
+  }, []);
+
   const persist = async (next) => {
-    setProjects(next);
+    setProjects(next); projectsRef.current = next; dirtyRef.current = true;
     try { await window.storage.set(STORE_KEY, JSON.stringify(next)); } catch {}
     pushCloud(next);
   };
 
   // 同期設定の保存
   const saveSync = async (cfg) => {
-    setSync(cfg);
+    setSync(cfg); syncRef.current = cfg;
     try { await window.storage.set(SYNC_KEY, JSON.stringify(cfg)); } catch {}
   };
-  // 手動: クラウドへ保存
+  // 手動: クラウドへ保存（競合時はサーバ版を取り込む）
   const syncPush = async () => {
-    if (!sync.url || !sync.token) return;
-    setSyncState({ status: "syncing", at: null, msg: "" });
-    try { await gasPost(sync, projects); setSyncState({ status: "ok", at: Date.now(), msg: "保存しました" }); }
-    catch (e) { setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) }); }
-  };
-  // 手動: クラウドから取得
-  const syncPull = async () => {
-    if (!sync.url || !sync.token) return;
+    const s = syncRef.current;
+    if (!s.url || !s.token) return;
     setSyncState({ status: "syncing", at: null, msg: "" });
     try {
-      const remote = await gasGet(sync);
-      if (remote) { const norm = normalizeProjects(remote); setProjects(norm); await window.storage.set(STORE_KEY, JSON.stringify(norm)); }
+      const res = await gasPost(s, projectsRef.current, revRef.current);
+      if (res.conflict && res.data) { await adopt(res.data, res.rev); setSyncState({ status: "ok", at: Date.now(), msg: "別の端末の変更を反映しました" }); }
+      else { revRef.current = res.rev; dirtyRef.current = false; saveMeta(); setSyncState({ status: "ok", at: Date.now(), msg: "保存しました" }); }
+    } catch (e) { setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) }); }
+  };
+  // 手動: クラウドから取得（サーバを正として取り込む）
+  const syncPull = async () => {
+    const s = syncRef.current;
+    if (!s.url || !s.token) return;
+    setSyncState({ status: "syncing", at: null, msg: "" });
+    try {
+      const remote = await gasGet(s);
+      if (remote && remote.data) await adopt(remote.data, remote.rev);
       setSyncState({ status: "ok", at: Date.now(), msg: "取得しました" });
     } catch (e) { setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) }); }
   };
