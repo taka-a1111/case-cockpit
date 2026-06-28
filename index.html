@@ -38,7 +38,7 @@ import {
   LayoutDashboard, Briefcase, ListChecks, Plus, X, Trash2, Reply,
   Clock, CheckCircle2, Circle, AlertTriangle, Inbox, Sparkles, Copy, Check,
   CalendarDays, Coins, ExternalLink, GripVertical, Settings, ChevronLeft, ChevronRight, ListPlus, Download, Upload,
-  AlignLeft, CornerDownRight, Link2, ArrowUpDown, Combine
+  AlignLeft, CornerDownRight, Link2, ArrowUpDown, Combine, Repeat
 } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0";
 
 /* ============================================================
@@ -155,9 +155,20 @@ const dStr = (offset = 0) => {
   const d = new Date(TODAY); d.setDate(d.getDate() + offset);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+const fmtYMD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+// 毎月 day 日の「from 以降で最初の」日付を返す（月末は自動調整）
+const nextMonthly = (day, fromStr) => {
+  const base = fromStr ? (() => { const p = String(fromStr).split("-").map(Number); return new Date(p[0], p[1] - 1, p[2]); })() : new Date(TODAY);
+  base.setHours(0, 0, 0, 0);
+  const mk = (y, m) => { const last = new Date(y, m + 1, 0).getDate(); return new Date(y, m, Math.min(day, last)); };
+  let y = base.getFullYear(), m = base.getMonth();
+  let occ = mk(y, m);
+  if (occ < base) { m++; if (m > 11) { m = 0; y++; } occ = mk(y, m); }
+  return fmtYMD(occ);
+};
 // 返信タスク（当日期限）。msg はクライアントから届いた原文をそのまま保持
-const reply = (title, msg = "") => ({ id: uid(), title, done: false, due: dStr(0), lane: "today", kind: "reply", msg });
-const task = (title, offset, lane = "today", done = false) => ({ id: uid(), title, done, due: offset == null ? "" : dStr(offset), start: "", lane, kind: "task" });
+const reply = (title, msg = "") => ({ id: uid(), title, done: false, due: dStr(0), lane: "today", kind: "reply", msg, note: "", repeat: null });
+const task = (title, offset, lane = "today", done = false) => ({ id: uid(), title, done, due: offset == null ? "" : dStr(offset), start: "", lane, kind: "task", note: "", repeat: null });
 
 function makeSample() {
   // 本番初期データ。Gmail（クラウドワークス通知）から確認できた進行中案件のみ骨組みで登録。
@@ -244,7 +255,7 @@ function normalizeProjects(arr) {
     status: STATUS_MIGRATE[p.status] || p.status || "進行中",
     start: p.start ?? "",
     received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
-    tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "" })),
+    tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "", note: t.note ?? "", repeat: t.repeat ?? null })),
   }));
   if (!list.some((p) => p.id === INBOX_ID)) list = [...list, makeInbox()];
   return list;
@@ -495,7 +506,14 @@ export default function App() {
   const removeProject = (id) => { persist(projects.filter((p) => p.id !== id)); setConfirmDel(null); goBack(); };
   const toggleTask = (pid, tid) =>
     persist(projects.map((p) => p.id !== pid ? p : {
-      ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, done: !t.done } : t),
+      ...p, tasks: p.tasks.map((t) => {
+        if (t.id !== tid) return t;
+        // 繰り返しタスク：完了にしたら翌月の指定日へ送って未完了のまま継続表示
+        if (!t.done && t.repeat && t.repeat.freq === "monthly" && t.repeat.day) {
+          return { ...t, done: false, start: nextMonthly(t.repeat.day, dStr(1)) };
+        }
+        return { ...t, done: !t.done };
+      }),
     }));
   const toggleProjectDone = (pid) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, status: p.status === "完了" ? "進行中" : "完了" }));
@@ -524,7 +542,7 @@ export default function App() {
     }));
   const addTaskToLane = (pid, lane, title) =>
     persist(projects.map((p) => p.id !== pid ? p : {
-      ...p, tasks: [...p.tasks, { id: uid(), title, done: false, due: "", start: "", lane, kind: "task" }],
+      ...p, tasks: [...p.tasks, { id: uid(), title, done: false, due: "", start: "", lane, kind: "task", note: "", repeat: null }],
     }));
   const setDeadline = (pid, deadline) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, deadline }));
@@ -551,6 +569,20 @@ export default function App() {
       pushCloud(prev);
       return prev;
     });
+  };
+  // タスクの並び替え（同一案件内）：ドラッグ中は表示のみ、離した時にcommitOrderで保存
+  const reorderTaskVisual = (pid, dragTid, overTid) => {
+    if (dragTid === overTid) return;
+    setProjects((prev) => prev.map((p) => {
+      if (p.id !== pid) return p;
+      const from = p.tasks.findIndex((t) => t.id === dragTid);
+      const to = p.tasks.findIndex((t) => t.id === overTid);
+      if (from < 0 || to < 0) return p;
+      const arr = [...p.tasks];
+      const [m] = arr.splice(from, 1);
+      arr.splice(to, 0, m);
+      return { ...p, tasks: arr };
+    }));
   };
 
   /* ---- derived ---- */
@@ -600,7 +632,7 @@ export default function App() {
       {/* ===== Body ===== */}
       <main style={S.main} onTouchStart={onMainTouchStart} onTouchEnd={onMainTouchEnd}>
         {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} />}
-        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onAddTask={addTaskToLane} activeLane={activeLane} setActiveLane={setActiveLane} />}
+        {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderCommit={commitOrder} activeLane={activeLane} setActiveLane={setActiveLane} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={setEditing} />}
       </main>
 
@@ -665,6 +697,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
 
   const startDrag = (pid, el, pointerId) => {
     try { el && el.setPointerCapture && pointerId != null && el.setPointerCapture(pointerId); } catch {}
+    setSortMode("manual"); // 並べ替えたら手動順に切替（再ソートで戻らないように）
     setDragId(pid);
     const move = (ev) => {
       if (ev.cancelable) ev.preventDefault();
@@ -771,7 +804,6 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
             <div key={t.id} style={S.replyItemWrap}>
               <div style={S.replyItem}>
                 <button style={S.replyItemMain} onClick={() => onOpen(p)}>
-                  <PlatformChip name={p.platform} small />
                   <span style={S.replyItemCol}>
                     <span style={S.replyItemName}>{p.company}</span>
                     <span style={S.replyItemSub}>{t.title}</span>
@@ -813,7 +845,6 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
             return (
               <div key={p.id} style={S.replyItem}>
                 <button style={S.replyItemMain} onClick={() => onOpen(p)}>
-                  <PlatformChip name={p.platform} small />
                   <span style={S.replyItemCol}>
                     <span style={S.replyItemName}>{p.company}</span>
                     {openCard === "progress" && (
@@ -864,7 +895,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
         </div>
         {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
         <div style={S.grid}>
-          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={sortMode === "manual" ? startDrag : undefined} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
         </div>
       </section>
     </div>
@@ -1064,84 +1095,56 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
 /* ============================================================
    タスクビュー（横タブ・横スワイプ切替・ポインタD&D）
    ============================================================ */
-function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChangeLane, onChangeDue, onChangeStart, onAddTask, activeLane, setActiveLane }) {
-  const [overTab, setOverTab] = useState(null);
-  const [moveId, setMoveId] = useState(null);
+function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChangeLane, onChangeDue, onChangeStart, onAddTask, onReorderTask, onReorderCommit, activeLane, setActiveLane }) {
   const [adding, setAdding] = useState(false);
   const [hideDone, setHideDone] = useState(false);
   const [dragTid, setDragTid] = useState(null);
-  const [ghost, setGhost] = useState(null);
 
-  const pendRef = useRef(null);      // 押下中のタスク候補
-  const draggingRef = useRef(false); // ドラッグ確定したか
-  const overTabRef = useRef(null);
-  const swipeRef = useRef(null);
-  const activeLaneRef = useRef(activeLane);
-  useEffect(() => { activeLaneRef.current = activeLane; }, [activeLane]);
-  useEffect(() => { overTabRef.current = overTab; }, [overTab]);
-
-  // ポインタ移動・離しのグローバル監視（マウスもタッチも pointer で統一）
-  useEffect(() => {
-    const move = (e) => {
-      const pend = pendRef.current; if (!pend) return;
-      const px = e.clientX, py = e.clientY;
-      if (!draggingRef.current) {
-        if (Math.hypot(px - pend.x, py - pend.y) > 8) { draggingRef.current = true; setDragTid(pend.tid); setMoveId(null); }
-        else return;
-      }
-      setGhost({ x: px, y: py, title: pend.title });
-      const el = document.elementFromPoint(px, py);
-      const tab = el && el.closest ? el.closest("[data-lane]") : null;
-      if (tab) {
-        setOverTab(tab.getAttribute("data-lane"));   // タブの上 → そのレーン
-      } else {
-        // タブ外では横移動量で隣レーンを移動先にする（右で次・左で前）
-        const dx = px - pend.x;
-        const idx = TASK_LANES.findIndex((L) => L.key === pend.lane);
-        if (dx > 60 && idx < TASK_LANES.length - 1) setOverTab(TASK_LANES[idx + 1].key);
-        else if (dx < -60 && idx > 0) setOverTab(TASK_LANES[idx - 1].key);
-        else setOverTab(null);
+  // 長押し→上下ドラッグでタスクを並べ替え（同一案件内）
+  const startTaskDrag = (pid, tid, el, pointerId) => {
+    try { el && el.setPointerCapture && pointerId != null && el.setPointerCapture(pointerId); } catch {}
+    setDragTid(tid);
+    const move = (ev) => {
+      if (ev.cancelable) ev.preventDefault();
+      const elAt = document.elementFromPoint(ev.clientX, ev.clientY);
+      const row = elAt && elAt.closest && elAt.closest("[data-tid]");
+      if (row) {
+        const overTid = row.getAttribute("data-tid");
+        const overPid = row.getAttribute("data-pid");
+        if (overPid === pid && overTid && overTid !== tid) onReorderTask && onReorderTask(pid, tid, overTid);
       }
     };
     const up = () => {
-      const pend = pendRef.current; pendRef.current = null;
-      if (draggingRef.current) {
-        draggingRef.current = false;
-        const target = overTabRef.current;
-        if (target && pend && target !== pend.lane) onChangeLane(pend.pid, pend.tid, target); // タブは切り替えず元レーンで連続仕分け
-        setDragTid(null); setGhost(null); setOverTab(null);
-      } else if (pend) {
-        setMoveId((prev) => (prev === pend.tid ? null : pend.tid)); // 動かなければタップ＝メニュー
-      }
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      setDragTid(null);
+      onReorderCommit && onReorderCommit();
+      const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); document.removeEventListener("click", swallow, true); };
+      document.addEventListener("click", swallow, true);
+      setTimeout(() => document.removeEventListener("click", swallow, true), 450);
     };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", up);
-    };
-  }, [onChangeLane]);
-
-  const onHandlePointerDown = (e, t) => {
-    e.preventDefault(); e.stopPropagation();
-    pendRef.current = { pid: t.project.id, tid: t.id, lane: activeLaneRef.current, x: e.clientX, y: e.clientY, title: t.title };
+    document.addEventListener("pointermove", move, { passive: false });
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
   };
 
   const all = [];
   projects.forEach((p) => p.tasks.forEach((t) => all.push({ ...t, project: p, _lane: laneOf(p, t) })));
-  const countOf = (lane) => all.filter((t) => t._lane === lane && !t.done).length;
+  const laneStatusOf = (lane) => lane === "waiting" ? "相手待ち" : lane === "payment" ? "支払い待ち" : null;
+  const openTasksOf = (p) => (p.tasks || []).filter((t) => !t.done);
+  const countOf = (lane) => {
+    const st = laneStatusOf(lane);
+    if (!st) return all.filter((t) => t._lane === lane && !t.done).length;
+    // 相手待ち/支払い待ち：タスクがあればその数、無ければ案件1件として数える
+    let c = 0;
+    projects.forEach((p) => { if (p.id !== INBOX_ID && p.status === st) { const n = openTasksOf(p).length; c += n > 0 ? n : 1; } });
+    return c;
+  };
   const laneTasks = (lane) => all
     .filter((t) => t._lane === lane)
     .filter((t) => !(hideDone && t.done))
-    .sort((a, b) => {
-      if (a.done !== b.done) return a.done ? 1 : -1;
-      const an = daysUntil(a.due), bn = daysUntil(b.due);
-      if (an === null && bn === null) return 0;
-      if (an === null) return 1; if (bn === null) return -1;
-      return an - bn;
-    });
+    .sort((a, b) => (a.done === b.done ? 0 : a.done ? 1 : -1)); // 完了のみ末尾。未完了は案件内の手動順（p.tasks順）を維持
 
   const activeMeta = TASK_LANES.find((L) => L.key === activeLane) || TASK_LANES[0];
   const items = laneTasks(activeLane);
@@ -1153,25 +1156,25 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
     if (!gmap.has(t.project.id)) { const g = { project: t.project, tasks: [] }; gmap.set(t.project.id, g); groups.push(g); }
     gmap.get(t.project.id).tasks.push(t);
   });
+  // 相手待ち/支払い待ち：タスクが無い該当案件も「案件行」として表示
+  const laneStatus = laneStatusOf(activeLane);
+  if (laneStatus) {
+    projects.forEach((p) => {
+      if (p.id === INBOX_ID || p.status !== laneStatus || gmap.has(p.id)) return;
+      groups.push({ project: p, tasks: [], projectOnly: true });
+    });
+  }
+  const hasAny = groups.length > 0;
 
   return (
     <div style={S.colWrap}>
-      {/* タブ（ドラッグ中のタスクをここに落とすと移動） */}
       <div style={S.taskTabs}>
         {TASK_LANES.map((L) => {
           const active = activeLane === L.key;
-          const over = overTab === L.key;
           return (
             <button key={L.key} data-lane={L.key}
-              style={{ ...S.taskTab, ...(active ? S.taskTabOn : {}), ...(over ? S.taskTabOver : {}) }}
-              onClick={() => setActiveLane(L.key)}
-              onDragOver={(e) => { e.preventDefault(); if (overTab !== L.key) setOverTab(L.key); }}
-              onDragLeave={() => setOverTab((o) => (o === L.key ? null : o))}
-              onDrop={(e) => {
-                e.preventDefault();
-                try { const d = JSON.parse(e.dataTransfer.getData("text/plain")); if (d && d.tid) onChangeLane(d.pid, d.tid, L.key); } catch {}
-                setOverTab(null);
-              }}>
+              style={{ ...S.taskTab, ...(active ? S.taskTabOn : {}) }}
+              onClick={() => setActiveLane(L.key)}>
               <span>{L.label}</span>
               <span style={{ ...S.taskTabCount, ...(active ? S.taskTabCountOn : {}) }}>{countOf(L.key)}</span>
             </button>
@@ -1198,7 +1201,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
       )}
 
       <div style={S.swipeArea}>
-        {items.length === 0 && !adding && <Empty text="このレーンにタスクはありません。" />}
+        {!hasAny && !adding && <Empty text="このレーンにタスクはありません。" />}
         {groups.map((g) => (
           <div key={g.project.id} style={S.taskGroup}>
             <button style={S.taskGroupHead}
@@ -1207,29 +1210,33 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
               <span style={S.taskGroupName}>{g.project.company}</span>
             </button>
             <div style={S.list}>
-              {g.tasks.map((t) => (
+              {g.projectOnly ? (
+                <button style={S.tcard} onClick={() => onOpen(g.project)}>
+                  <span style={{ ...S.waitRowIcon, color: activeLane === "payment" ? "#51CF66" : "#D9A23B" }}>
+                    {activeLane === "payment" ? "💰" : "⏳"}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                    <div style={S.tcardTitle}>{activeLane === "payment" ? "入金待ち" : "先方の返信・対応待ち"}</div>
+                    {g.project.deadline && <div style={S.tcardMeta}><span style={S.tcardCompany}>納期 {dateLabelJP(g.project.deadline).text}</span></div>}
+                  </div>
+                </button>
+              ) : g.tasks.map((t) => (
                 <TaskCard key={t.id} t={t} lane={activeLane}
                   onToggle={onToggle} onOpen={onOpen} onOpenTask={onOpenTask} onEditTask={onEditTask}
-                  dragging={dragTid === t.id}
-                  moveOpen={moveId === t.id}
-                  onHandlePointerDown={onHandlePointerDown}
+                  dragging={dragTid === t.id} dragActive={dragTid !== null}
+                  onStartDrag={startTaskDrag}
                   onChangeStart={(start) => onChangeStart(t.project.id, t.id, start)}
-                  onChangeDue={(due) => onChangeDue(t.project.id, t.id, due)}
-                  onMove={(lane) => { onChangeLane(t.project.id, t.id, lane); setMoveId(null); }} />
+                  onChangeDue={(due) => onChangeDue(t.project.id, t.id, due)} />
               ))}
             </div>
           </div>
         ))}
       </div>
-
-      {ghost && (
-        <div style={{ ...S.ghost, left: ghost.x + 10, top: ghost.y + 10 }}>{ghost.title || "（無題）"}</div>
-      )}
     </div>
   );
 }
 
-function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging, moveOpen, onHandlePointerDown, onMove, onChangeDue, onChangeStart }) {
+function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging, dragActive, onStartDrag, onChangeDue, onChangeStart }) {
   const judge = taskJudgeDate(t); // いつやる（start）優先、なければ期限（due）。レーン判定と一致させる
   const lab = judge ? dateLabelJP(judge) : null;
   const jn = judge ? daysUntil(judge) : null;
@@ -1241,12 +1248,25 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
     ["今日", dStrLocal(0)], ["明日", dStrLocal(1)], ["3日後", dStrLocal(3)], ["1週間後", dStrLocal(7)], ["なし", ""],
   ];
   const setSchedule = (val) => { onChangeStart ? onChangeStart(val) : onChangeDue(val); };
-  const onDragStart = (e) => {
-    try { e.dataTransfer.setData("text/plain", JSON.stringify({ pid: t.project.id, tid: t.id })); e.dataTransfer.effectAllowed = "move"; } catch {}
+  // 長押し（180ms）で並べ替えドラッグ開始
+  const lpTimer = useRef(null);
+  const downInfo = useRef(null);
+  const tdown = (e) => {
+    if (e.target.closest && e.target.closest("button, input, a, label")) return; // 操作系は除外
+    downInfo.current = { el: e.currentTarget, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
+    lpTimer.current = setTimeout(() => {
+      if (downInfo.current && onStartDrag) onStartDrag(t.project.id, t.id, downInfo.current.el, downInfo.current.pointerId);
+    }, 180);
   };
+  const tmove = (e) => {
+    if (!downInfo.current || !lpTimer.current) return;
+    if (Math.hypot(e.clientX - downInfo.current.x, e.clientY - downInfo.current.y) > 10) { clearTimeout(lpTimer.current); lpTimer.current = null; }
+  };
+  const tup = () => { if (lpTimer.current) { clearTimeout(lpTimer.current); lpTimer.current = null; } };
   return (
-    <div style={{ ...S.tcard, ...(t.done ? S.tcardDone : {}), ...(dragging ? S.tcardDragging : {}) }}
-      draggable onDragStart={onDragStart}>
+    <div data-tid={t.id} data-pid={t.project.id}
+      style={{ ...S.tcard, ...(t.done ? S.tcardDone : {}), ...(dragging ? S.tcardDragging : {}), touchAction: dragActive ? "none" : "pan-y" }}
+      onPointerDown={tdown} onPointerMove={tmove} onPointerUp={tup} onPointerCancel={tup}>
       <button style={S.checkBtn} onClick={() => onToggle(t.project.id, t.id)}>
         {t.done ? <CheckCircle2 size={18} color="#51CF66" strokeWidth={2.2} />
                 : <Circle size={18} color="#3A434F" strokeWidth={2.2} />}
@@ -1259,6 +1279,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
         }}>
         <div style={{ ...S.tcardTitle, ...(t.done ? S.trowDone : {}) }}>
           {t.kind === "reply" && <Reply size={13} color="#6B8AFF" strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
+          {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
           {t.title || "（無題）"}
         </div>
         <div style={S.tcardMeta}>
@@ -1332,6 +1353,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   const [genError, setGenError] = useState("");
   const [extractMsg, setExtractMsg] = useState("");
   const [pendingTasks, setPendingTasks] = useState([]); // [{id,title,on}] 抽出された候補（確認待ち）
+  const [pendingGroup, setPendingGroup] = useState(""); // まとめ時の共通タスク名
   const [mergeMode, setMergeMode] = useState(false);    // 1つのタスクにまとめる
   const [copied, setCopied] = useState(false);
   const [autoSaved, setAutoSaved] = useState(false);
@@ -1417,8 +1439,9 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   const dismissAllDiff = () => { setPendingDiff([]); setParseMsg("反映をキャンセルしました。"); };
 
   const [justAddedId, setJustAddedId] = useState(null);
-  const addTask = () => { const id = uid(); set("tasks", [...d.tasks, { id, title: "", done: false, due: "", start: "", lane: "later", kind: "task" }]); setJustAddedId(id); };
+  const addTask = () => { const id = uid(); set("tasks", [...d.tasks, { id, title: "", done: false, due: "", start: "", lane: "later", kind: "task", note: "", repeat: null }]); setJustAddedId(id); };
   const setTask = (id, k, v) => set("tasks", d.tasks.map((t) => t.id === id ? { ...t, [k]: v } : t));
+  const patchTask = (id, patch) => set("tasks", d.tasks.map((t) => t.id === id ? { ...t, ...patch } : t));
   const delTask = (id) => set("tasks", d.tasks.filter((t) => t.id !== id));
 
   async function generateReply() {
@@ -1461,18 +1484,20 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
 
   async function extractTasks() {
     if (!d.received.trim()) { setGenError("先に相手から届いたメッセージを貼り付けてください。"); return; }
-    setExtracting(true); setGenError(""); setExtractMsg(""); setPendingTasks([]); setMergeMode(false);
+    setExtracting(true); setGenError(""); setExtractMsg(""); setPendingTasks([]); setMergeMode(false); setPendingGroup("");
     try {
       const text = await callClaude({
-        maxTokens: 500,
-        system: "あなたはフリーランスのアシスタントです。届いたメッセージから、こちらが対応すべき『やるべきこと』を具体的なタスクに分解します。各タスクは短い命令形の日本語（例：見積りを作成する）。出力はJSON配列のみ（例：[\"見積りを作成する\",\"納期を回答する\"]）。前置き・説明・コードブロック記法は一切付けない。やるべきことが無ければ [] のみ。",
+        maxTokens: 600,
+        system: "あなたはフリーランスのアシスタントです。届いたメッセージから、こちらが対応すべき『やるべきこと』を具体的なタスクに分解します。各タスクは短い命令形の日本語（例：見積りを作成する）。さらに、それらを1つにまとめる時の簡潔な共通タスク名（10文字前後、例：初稿の修正対応）も作ります。出力はJSONオブジェクトのみ：{\"group\":\"共通タスク名\",\"tasks\":[\"…\",\"…\"]}。前置き・説明・コードブロック記法は一切付けない。やるべきことが無ければ {\"group\":\"\",\"tasks\":[]} のみ。",
         user: `# 案件\n会社: ${d.company || "（未設定）"}\n業務: ${d.work || "（未設定）"}\n\n# 届いたメッセージ\n${d.received}`,
       });
-      let arr = [];
-      try { arr = JSON.parse(text.replace(/```json|```/g, "").trim()); } catch { arr = []; }
-      let titles = Array.isArray(arr) ? arr.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim()) : [];
+      let obj = {};
+      try { obj = JSON.parse(text.replace(/```json|```/g, "").trim()); } catch { obj = {}; }
+      const rawTasks = Array.isArray(obj) ? obj : (obj && Array.isArray(obj.tasks) ? obj.tasks : []);
+      let titles = rawTasks.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim());
       titles = [...new Set(titles)];
       if (!titles.length) { setExtractMsg("対応が必要なタスクは見つかりませんでした。"); return; }
+      setPendingGroup((obj && typeof obj.group === "string" && obj.group.trim()) ? obj.group.trim() : "対応事項");
       // 即登録せず、確認用の候補としてセット（既定はすべて「反映」ON）
       setPendingTasks(titles.map((title) => ({ id: uid(), title, on: true })));
     } catch {
@@ -1482,16 +1507,17 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   // 抽出候補の操作
   const togglePending = (id) => setPendingTasks((list) => list.map((t) => t.id === id ? { ...t, on: !t.on } : t));
   const editPending = (id, title) => setPendingTasks((list) => list.map((t) => t.id === id ? { ...t, title } : t));
-  const cancelPending = () => { setPendingTasks([]); setMergeMode(false); };
+  const cancelPending = () => { setPendingTasks([]); setMergeMode(false); setPendingGroup(""); };
   // 「反映」する候補を実際にタスクへ登録
   function applyPending() {
     const chosen = pendingTasks.filter((t) => t.on && t.title.trim()).map((t) => t.title.trim());
     if (!chosen.length) { cancelPending(); return; }
     let newTasks;
     if (mergeMode) {
-      newTasks = [{ id: uid(), title: chosen.join("／"), done: false, due: "", start: "", lane: "today", kind: "task" }];
+      const title = (pendingGroup && pendingGroup.trim()) || chosen[0];
+      newTasks = [{ id: uid(), title, done: false, due: "", start: "", lane: "today", kind: "task", note: chosen.map((c) => `・${c}`).join("\n"), repeat: null }];
     } else {
-      newTasks = chosen.map((title) => ({ id: uid(), title, done: false, due: "", start: "", lane: "today", kind: "task" }));
+      newTasks = chosen.map((title) => ({ id: uid(), title, done: false, due: "", start: "", lane: "today", kind: "task", note: "", repeat: null }));
     }
     set("tasks", [...d.tasks, ...newTasks]);
     setExtractMsg(mergeMode ? "1件のタスクにまとめて登録しました。" : `${newTasks.length}件のタスクを登録しました。`);
@@ -1742,15 +1768,19 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                   </button>
                   <input style={{ ...S.taskInput, ...(t.done ? S.trowDone : {}) }} value={t.title}
                     autoFocus={t.id === justAddedId}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); onClose(); } }}
                     placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
                   <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#616B7A" /></button>
                 </div>
+                <textarea style={S.taskNoteInput} value={t.note || ""} rows={1}
+                  placeholder="詳細・メモ" onChange={(e) => setTask(t.id, "note", e.target.value)} />
                 <div style={S.taskEditDates}>
                   <Clock size={15} color={C.ink3} strokeWidth={2} style={{ flexShrink: 0 }} />
                   <DateField value={t.start} placeholder="いつやる" onChange={(v) => setTask(t.id, "start", v)} />
                   <span style={S.taskDateSep}>／</span>
                   <DateField value={t.due} placeholder="期限" onChange={(v) => setTask(t.id, "due", v)} />
                 </div>
+                <RepeatField value={t.repeat} onChange={(patch) => patchTask(t.id, patch)} />
               </div>
             ))}
             <button style={S.taskAddRow} onClick={addTask}>
@@ -2056,20 +2086,32 @@ function CalendarView({ projects, onOpen }) {
 /* ============================================================
    小物コンポーネント
    ============================================================ */
+function useWideScreen(bp = 820) {
+  const get = () => (typeof window !== "undefined" ? window.innerWidth >= bp : false);
+  const [w, setW] = useState(get);
+  useEffect(() => { const on = () => setW(get()); window.addEventListener("resize", on); return () => window.removeEventListener("resize", on); }, []);
+  return w;
+}
 function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDelete, onStatusChange }) {
   const [confirm, setConfirm] = useState(false);
+  const wide = useWideScreen();
   return (
     <>
       <div style={S.scrim} onClick={onClose} />
-      <aside style={S.taskSheet}>
+      <aside style={wide ? S.taskDrawer : S.taskSheet}>
         <div style={S.taskSheetHead}>
           <span style={S.taskSheetProject}>{project.company}</span>
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
         </div>
-        <div style={S.taskSheetBody}>
+        <div style={{ ...S.taskSheetBody, ...(wide ? { flex: 1 } : {}) }}>
           <input style={S.titleInput} value={task.title} placeholder="やること"
             onChange={(e) => onUpdate({ title: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); onClose(); } }} />
+          <div style={S.infoRow}>
+            <AlignLeft size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
+            <textarea style={S.taskSheetNote} value={task.note || ""} placeholder="詳細・メモ" rows={2}
+              onChange={(e) => onUpdate({ note: e.target.value })} />
+          </div>
           <div style={S.infoRow}>
             <Clock size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <DateField value={task.start} placeholder="いつやる" onChange={(v) => onUpdate({ start: v })} autoOpen={focus === "date"} />
@@ -2077,6 +2119,9 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
           <div style={S.infoRow}>
             <CalendarDays size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <DateField value={task.due} placeholder="期限" onChange={(v) => onUpdate({ due: v })} />
+          </div>
+          <div style={S.infoRow}>
+            <RepeatField value={task.repeat} onChange={(patch) => onUpdate(patch)} />
           </div>
           {project.id !== INBOX_ID && onStatusChange && (
             <div style={S.infoRow}>
@@ -2107,6 +2152,25 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
         </div>
       </aside>
     </>
+  );
+}
+function RepeatField({ value, onChange }) {
+  const setDay = (n) => { const day = Math.min(31, Math.max(1, Number(n) || 1)); onChange({ repeat: { freq: "monthly", day }, start: nextMonthly(day) }); };
+  return (
+    <div style={S.repeatRow} onPointerDown={(e) => e.stopPropagation()}>
+      <Repeat size={15} color={value ? C.accent : C.ink3} strokeWidth={2} style={{ flexShrink: 0 }} />
+      {!value ? (
+        <button style={S.repeatAdd} onClick={() => setDay(new Date(TODAY).getDate())}>毎月くり返し</button>
+      ) : (
+        <>
+          <span style={S.repeatLabel}>毎月</span>
+          <input type="number" min={1} max={31} value={value.day} style={S.repeatDayInput}
+            onChange={(e) => setDay(e.target.value)} />
+          <span style={S.repeatLabel}>日に表示</span>
+          <button style={S.repeatClear} onClick={() => onChange({ repeat: null })}><X size={13} /></button>
+        </>
+      )}
+    </div>
   );
 }
 function DateField({ value, placeholder, onChange, autoOpen }) {
@@ -2306,9 +2370,9 @@ const S = {
   replyItemDueSub: { fontSize: 14, fontWeight: 700, fontFamily: F.disp },
   dueTaskList: { display: "flex", flexDirection: "column", gap: 4, marginTop: 5 },
   dueTaskRow: { display: "flex", alignItems: "center", gap: 8 },
-  dueTaskName: { flex: 1, minWidth: 0, fontSize: 14, color: C.ink2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  dueTaskDays: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0 },
-  replyItemName: { fontWeight: 700, fontSize: 14, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  dueTaskName: { flex: 1, minWidth: 0, fontSize: 15.5, color: C.ink2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  dueTaskDays: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0 },
+  replyItemName: { fontWeight: 700, fontSize: 16.5, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   replyItemLink: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.16)", padding: "6px 11px", borderRadius: 8, textDecoration: "none", flexShrink: 0, whiteSpace: "nowrap" },
 
   kpiRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
@@ -2449,6 +2513,8 @@ const S = {
   taskSheetBody: { padding: "4px 18px 8px", display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" },
   taskSheetFoot: { display: "flex", alignItems: "center", gap: 8, padding: "12px 18px 16px", borderTop: `1px solid ${C.line}` },
   taskDoneBtn: { display: "inline-flex", alignItems: "center", gap: 6, border: "none", background: C.accent, color: "#fff", borderRadius: 10, padding: "10px 16px", fontSize: 14.5, fontWeight: 700 },
+  taskDrawer: { position: "fixed", top: 0, right: 0, bottom: 0, width: "min(620px, 100vw)", zIndex: 50, background: C.bg, display: "flex", flexDirection: "column", boxShadow: "-12px 0 40px rgba(0,0,0,0.4)" },
+  taskSheetNote: { flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", color: C.ink, fontSize: 15, lineHeight: 1.5, resize: "vertical", fontFamily: "inherit", padding: "2px 0" },
   drawer: {
     position: "fixed", top: 0, right: 0, bottom: 0, width: "min(620px, 100vw)", zIndex: 50,
     background: C.bg, display: "flex", flexDirection: "column", boxShadow: "-12px 0 40px rgba(0,0,0,0.4)",
@@ -2496,6 +2562,12 @@ const S = {
   taskDateField: { flex: 1, display: "flex", flexDirection: "column", gap: 3 },
   taskDateLabel: { fontSize: 13, fontWeight: 700, color: C.ink3 },
   taskInput: { flex: 1, minWidth: 0, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 9px", fontSize: 14.5 },
+  taskNoteInput: { width: "100%", marginLeft: 28, marginTop: 4, boxSizing: "border-box", maxWidth: "calc(100% - 28px)", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "6px 9px", fontSize: 13.5, color: C.ink2, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, outline: "none" },
+  repeatRow: { display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 },
+  repeatAdd: { border: "none", background: "transparent", color: C.ink3, fontSize: 14, fontWeight: 600, padding: "2px 0" },
+  repeatLabel: { fontSize: 14, color: C.ink2, fontWeight: 600 },
+  repeatDayInput: { width: 46, textAlign: "center", background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 7, color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "4px 4px" },
+  repeatClear: { marginLeft: "auto", border: "none", background: "transparent", color: C.ink3, display: "inline-flex", padding: 2 },
   taskDate: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 8px", fontSize: 14, color: C.ink2, width: "100%" },
   taskRowOld_removed: { display: "none" },
 
@@ -2575,6 +2647,7 @@ const S = {
   tcardMeta: { display: "flex", alignItems: "center", gap: 7, marginTop: 6, flexWrap: "wrap" },
   tcardProject: { display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", padding: 0, fontSize: 14.5, color: C.ink2, fontWeight: 600, minWidth: 0 },
   tcardCompany: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 130 },
+  waitRowIcon: { fontSize: 16, lineHeight: "20px", flexShrink: 0, width: 20, textAlign: "center" },
   dueMini: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
 
   moveWrap: { position: "relative", flexShrink: 0 },
