@@ -242,6 +242,7 @@ function normalizeProjects(arr) {
   let list = arr.map((p) => ({
     ...p,
     status: STATUS_MIGRATE[p.status] || p.status || "進行中",
+    start: p.start ?? "",
     received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
     tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "" })),
   }));
@@ -705,6 +706,9 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
     if (da === Infinity) return 1; if (db === Infinity) return -1;
     return db - da;
   });
+  // ステータス順を最優先：進行中→相手待ち→支払い待ち（各グループ内は上のソート順を維持）
+  const statusRank = (p) => (p.status === "相手待ち" ? 1 : p.status === "支払い待ち" ? 2 : 0);
+  cardList = [...cardList].sort((a, b) => statusRank(a) - statusRank(b));
   const sortLabels = { manual: "手動（ドラッグ）", reward: "金額が高い順", dueAsc: "納期が近い順", dueDesc: "納期が遠い順" };
 
   const minDue = (p) => { const a = dueDaysList(p); return a.length ? Math.min(...a) : Infinity; };
@@ -1341,7 +1345,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   useEffect(() => {
     if (firstRender.current) { firstRender.current = false; return; }
     const empty = !d.company && !d.work && !d.note && !d.summary && !d.received
-      && (!d.tasks || d.tasks.length === 0) && !d.deadline && !d.reward && !d.replyUrl && !d.replyDraft;
+      && (!d.tasks || d.tasks.length === 0) && !d.deadline && !d.start && !d.reward && !d.replyUrl && !d.replyDraft;
     if (empty) return; // 新規で実質空なら保存しない
     const t = setTimeout(() => { onAutoSave && onAutoSave(d); setAutoSaved(true); setTimeout(() => setAutoSaved(false), 1200); }, 600);
     return () => clearTimeout(t);
@@ -1350,7 +1354,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   // 閉じる前に未保存の変更を確実に保存
   const closeWithSave = () => {
     const empty = !d.company && !d.work && !d.note && !d.summary && !d.received
-      && (!d.tasks || d.tasks.length === 0) && !d.deadline && !d.reward && !d.replyUrl && !d.replyDraft;
+      && (!d.tasks || d.tasks.length === 0) && !d.deadline && !d.start && !d.reward && !d.replyUrl && !d.replyDraft;
     if (!empty && onAutoSave) onAutoSave(d);
     onClose();
   };
@@ -1615,6 +1619,11 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
 
           <div style={S.infoRow}>
             <Clock size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
+            <DateField value={d.start} placeholder="いつやるを追加" onChange={(v) => set("start", v)} />
+          </div>
+
+          <div style={S.infoRow}>
+            <CalendarDays size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <DateField value={d.deadline} placeholder="期限を追加" onChange={(v) => set("deadline", v)} />
           </div>
 
@@ -1936,6 +1945,7 @@ function CalendarView({ projects, onOpen }) {
       const dates = [...new Set([t.start, t.due].filter(Boolean))];
       dates.forEach((dk) => push(dk, { kind: "task", label: t.title, color: C.accent, project: p }));
     });
+    if (p.start && p.id !== INBOX_ID && p.status !== "完了") push(p.start, { kind: "task", label: "着手", color: C.accent, project: p });
     if (p.deadline && p.id !== INBOX_ID && p.status !== "完了") push(p.deadline, { kind: "deadline", label: "納期", color: "#FF6B6B", project: p });
   });
 
@@ -2165,7 +2175,7 @@ function linkInfo(url) {
 }
 function blankDraft() {
   return { id: uid(), company: "", platform: "クラウドワークス", work: "", reward: "",
-    status: "進行中", reply: "なし", deadline: "", note: "",
+    status: "進行中", reply: "なし", deadline: "", start: "", note: "",
     received: "", replyDraft: "", repliedAt: null, replyUrl: "", replyHistory: [], summary: "", tasks: [] };
 }
 function Fonts() {
