@@ -819,7 +819,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                     {openCard === "progress" && (
                       <span style={S.replyItemMetaRow}>
                         <span style={S.replyItemReward}>{yenMan(p.reward)}</span>
-                        <span style={{ ...S.replyItemDueSub, color: dm.color }}>{dm.text}</span>
+                        <span style={{ ...S.replyItemDueSub, color: dm.n < 0 ? "#FF6B6B" : "#9AA4B2" }}>{dm.text}</span>
                       </span>
                     )}
                     {dueItems.length > 0 && (
@@ -827,7 +827,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                         {dueItems.map((it, idx) => (
                           <span key={idx} style={S.dueTaskRow}>
                             <span style={S.dueTaskName}>{it.isDeadline ? "📅 " : it.byStart ? "▶ " : ""}{it.label}</span>
-                            <span style={{ ...S.dueTaskDays, color: it.n <= 3 ? "#FF6B6B" : "#9AA4B2" }}>{dDays(it.n)}</span>
+                            <span style={{ ...S.dueTaskDays, color: it.n < 0 ? "#FF6B6B" : "#9AA4B2" }}>{dDays(it.n)}</span>
                           </span>
                         ))}
                       </span>
@@ -1416,7 +1416,8 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   const dismissDiff = (f) => setPendingDiff((arr) => arr.filter((x) => x.field !== f));
   const dismissAllDiff = () => { setPendingDiff([]); setParseMsg("反映をキャンセルしました。"); };
 
-  const addTask = () => set("tasks", [...d.tasks, { id: uid(), title: "", done: false, due: "", start: "", lane: "later", kind: "task" }]);
+  const [justAddedId, setJustAddedId] = useState(null);
+  const addTask = () => { const id = uid(); set("tasks", [...d.tasks, { id, title: "", done: false, due: "", start: "", lane: "later", kind: "task" }]); setJustAddedId(id); };
   const setTask = (id, k, v) => set("tasks", d.tasks.map((t) => t.id === id ? { ...t, [k]: v } : t));
   const delTask = (id) => set("tasks", d.tasks.filter((t) => t.id !== id));
 
@@ -1731,7 +1732,6 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
           <div style={S.subtaskHead}>
             <CornerDownRight size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <span style={S.subtaskHeadLabel}>タスク</span>
-            <button style={S.subtaskAddBtn} onClick={addTask}><Plus size={14} strokeWidth={2.6} />追加</button>
           </div>
           <div style={S.taskEditList}>
             {d.tasks.map((t) => (
@@ -1741,6 +1741,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                     {t.done ? <CheckCircle2 size={18} color="#51CF66" /> : <Circle size={18} color="#3A434F" />}
                   </button>
                   <input style={{ ...S.taskInput, ...(t.done ? S.trowDone : {}) }} value={t.title}
+                    autoFocus={t.id === justAddedId}
                     placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
                   <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#616B7A" /></button>
                 </div>
@@ -1752,6 +1753,9 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                 </div>
               </div>
             ))}
+            <button style={S.taskAddRow} onClick={addTask}>
+              <Plus size={17} strokeWidth={2.6} />タスクを追加
+            </button>
           </div>
         </div>
 
@@ -2307,7 +2311,7 @@ const S = {
   replyItemName: { fontWeight: 700, fontSize: 14, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   replyItemLink: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.16)", padding: "6px 11px", borderRadius: 8, textDecoration: "none", flexShrink: 0, whiteSpace: "nowrap" },
 
-  kpiRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 },
+  kpiRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
   kpiCard: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: "11px 13px", textAlign: "left", width: "100%" },
   kpiCardBtn: { cursor: "pointer" },
   kpiHint: { display: "block", marginTop: 4, fontSize: 13, color: C.ink3, fontWeight: 600 },
@@ -2475,6 +2479,7 @@ const S = {
   subtaskHead: { display: "flex", alignItems: "center", gap: 14, padding: "10px 2px 4px", borderTop: `1px solid ${C.line}` },
   subtaskHeadLabel: { flex: 1, fontSize: 16, color: C.ink2, fontWeight: 600 },
   subtaskAddBtn: { display: "inline-flex", alignItems: "center", gap: 4, border: "none", background: "transparent", color: C.accent, fontSize: 14.5, fontWeight: 700, padding: "2px 4px" },
+  taskAddRow: { display: "flex", alignItems: "center", gap: 8, border: `1px dashed ${C.line}`, background: "transparent", color: C.accent, fontSize: 15, fontWeight: 700, padding: "11px 12px", borderRadius: 10, width: "100%", justifyContent: "center" },
 
   field: { display: "flex", flexDirection: "column", gap: 6 },
   fieldLabel: { fontSize: 14.5, fontWeight: 700, color: C.ink2, letterSpacing: 0.2 },
