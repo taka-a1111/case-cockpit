@@ -211,6 +211,13 @@ function dueMeta(dateStr) {
   return { n, color: "#9AA4B2", text: `あと${n}日`, urgent: false };
 }
 const yen = (v) => (v ? "¥" + v.toLocaleString("ja-JP") : "—");
+// 万円表記：15000→1.5万円、30000→3万円、733000→73.3万円
+const yenMan = (v) => {
+  const n = Number(v);
+  if (!n) return "—";
+  const man = Math.round((n / 10000) * 10) / 10;
+  return (Number.isInteger(man) ? man.toString() : man.toFixed(1)) + "万円";
+};
 // 一覧用の日付ラベル：今日／N日前（期限切れ）／M月D日（曜）
 const WD_JP = ["日", "月", "火", "水", "木", "金", "土"];
 function dateLabelJP(dateStr) {
@@ -713,7 +720,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
     { key: "reply", label: "要返信", value: kpi.needReply, unit: "件", color: "#6B8AFF", Icon: Reply, hot: kpi.needReply > 0 },
     { key: "weekDue", label: "7日以内", value: kpi.weekDue, unit: "件", color: "#9AA4B2", Icon: CalendarDays },
     { key: "overdue", label: "期限超過", value: kpi.overdue, unit: "件", color: "#FF6B6B", Icon: AlertTriangle, hot: kpi.overdue > 0 },
-    { key: "progress", label: "進行中の見込み", value: kpi.revenue ? "¥" + kpi.revenue.toLocaleString("ja-JP") : "—", unit: "", color: "#E8ECF2", Icon: Coins, wide: true, count: kpi.inProgress },
+    { key: "progress", label: "進行中の見込み", value: kpi.revenue ? yenMan(kpi.revenue) : "—", unit: "", color: "#E8ECF2", Icon: Coins, wide: true, count: kpi.inProgress },
   ];
 
   const titleOf = { reply: "本日中に返信", weekDue: "7日以内が締切の案件", overdue: "期限を過ぎている案件", progress: "進行中の案件" };
@@ -807,7 +814,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                     <span style={S.replyItemName}>{p.company}</span>
                     {openCard === "progress" && (
                       <span style={S.replyItemMetaRow}>
-                        <span style={S.replyItemReward}>{yen(Number(p.reward))}</span>
+                        <span style={S.replyItemReward}>{yenMan(p.reward)}</span>
                         <span style={{ ...S.replyItemDueSub, color: dm.color }}>{dm.text}</span>
                       </span>
                     )}
@@ -1006,7 +1013,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
                 onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />
             </span>
           )}
-          <span style={S.cardReward}>{yen(Number(p.reward))}</span>
+          <span style={S.cardReward}>{yenMan(p.reward)}</span>
         </div>
       )}
 
