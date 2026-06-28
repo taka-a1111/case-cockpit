@@ -455,8 +455,9 @@ export default function App() {
     try {
       const remote = await gasGet(s);
       if (remote && remote.data && !dirtyRef.current) {
+        const remoteReal = remote.data.some((p) => p && p.id !== INBOX_ID);
         const remoteNorm = normalizeProjects(remote.data);
-        if (JSON.stringify(remoteNorm) !== JSON.stringify(projectsRef.current)) {
+        if (remoteReal && JSON.stringify(remoteNorm) !== JSON.stringify(projectsRef.current)) {
           await adopt(remote.data, remote.rev); // 内容が違う＝他端末で更新あり→取り込む
         } else if (remote.rev !== revRef.current) {
           revRef.current = remote.rev; saveMeta();
@@ -502,11 +503,12 @@ export default function App() {
         setSyncState({ status: "syncing", at: null, msg: "" });
         try {
           const remote = await gasGet(cfg);
+          const remoteReal = !!(remote && remote.data && remote.data.some((p) => p && p.id !== INBOX_ID));
           if (remote && remote.data) {
-            if (remote.rev > revRef.current) {
+            if (remote.rev > revRef.current && remoteReal) {
               await adopt(remote.data, remote.rev); // サーバが新しい→取り込む
-            } else if (JSON.stringify(normalizeProjects(remote.data)) !== JSON.stringify(localNorm)) {
-              pushCloud(localNorm, cfg); // ローカルに未送信の差分→送って同期
+            } else if (!remoteReal) {
+              pushCloud(localNorm, cfg); // サーバが空→ローカルを初期データとして送る
             } else {
               revRef.current = remote.rev; saveMeta();
             }
@@ -563,6 +565,32 @@ export default function App() {
       if (remote && remote.data) await adopt(remote.data, remote.rev);
       setSyncState({ status: "ok", at: Date.now(), msg: "取得しました" });
     } catch (e) { setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) }); }
+  };
+  // 接続診断：サーバの生レスポンスを調べ、新旧GAS・件数・同期設定を報告
+  const syncDiagnose = async () => {
+    const s = syncRef.current;
+    if (!s.url || !s.token) return "URLまたは同期キーが未入力です。設定を保存してください。";
+    try {
+      const u = s.url + (s.url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(s.token) + "&_=" + Date.now();
+      const res = await fetch(u, { method: "GET", redirect: "follow" });
+      const txt = await res.text();
+      if (txt.trim().startsWith("<")) return "❌ 認証ページが返りました。\nデプロイのアクセス権を『全員』に、URL末尾が /exec か確認してください。";
+      let j; try { j = JSON.parse(txt); } catch { return "❌ 応答を解析できません。\nURL末尾が /exec か確認してください。"; }
+      if (j && j.ok === false) return "❌ 認証エラー：" + (j.error || "同期キーが違います");
+      const hasRev = j && Object.prototype.hasOwnProperty.call(j, "rev");
+      const arr = Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : []);
+      const serverCount = arr.filter((p) => p && p.id !== INBOX_ID).length;
+      const localCount = projectsRef.current.filter((p) => p && p.id !== INBOX_ID).length;
+      const lines = [];
+      lines.push("✅ サーバに接続できました");
+      lines.push(hasRev ? `GAS：新バージョン（rev=${j.rev}）` : "⚠ GASが旧バージョンです。gas-sync.gs を全文置換し、デプロイを管理→新しいバージョンで再デプロイしてください。");
+      lines.push(`サーバの案件数：${serverCount}件`);
+      lines.push(`この端末の案件数：${localCount}件（ローカルrev=${revRef.current}）`);
+      lines.push(`同期トグル：${s.on ? "有効" : "⚠ 無効（オンにして保存してください）"}`);
+      return lines.join("\n");
+    } catch (e) {
+      return "❌ 接続できません：" + String(e.message || e) + "\nURL・ネットワーク・アクセス権『全員』を確認してください。";
+    }
   };
 
   /* ---- mutations ---- */
@@ -741,7 +769,7 @@ export default function App() {
       </main>
 
       {showSettings && <SettingsModal onClose={goBack}
-        sync={sync} syncState={syncState} onSaveSync={saveSync} onSyncPush={syncPush} onSyncPull={syncPull} />}
+        sync={sync} syncState={syncState} onSaveSync={saveSync} onSyncPush={syncPush} onSyncPull={syncPull} onDiagnose={syncDiagnose} />}
 
       {/* ===== Drawer ===== */}
       {editing && (
@@ -1995,10 +2023,12 @@ function ReplyHistoryList({ history }) {
   );
 }
 
-function SettingsModal({ onClose, sync, syncState, onSaveSync, onSyncPush, onSyncPull }) {
+function SettingsModal({ onClose, sync, syncState, onSaveSync, onSyncPush, onSyncPull, onDiagnose }) {
   const [key, setKey] = useState("");
   const [saved, setSaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [diag, setDiag] = useState("");
+  const [diagBusy, setDiagBusy] = useState(false);
 
   // 同期設定の編集用ローカルコピー
   const [sUrl, setSUrl] = useState(sync?.url || "");
@@ -2082,6 +2112,12 @@ function SettingsModal({ onClose, sync, syncState, onSaveSync, onSyncPush, onSyn
             <button style={S.syncSubBtn} onClick={onSyncPull} disabled={!sUrl || !sToken}><Download size={14} strokeWidth={2.3} />クラウドから取得</button>
             <button style={S.syncSubBtn} onClick={onSyncPush} disabled={!sUrl || !sToken}><Upload size={14} strokeWidth={2.3} />クラウドへ保存</button>
           </div>
+          <button style={{ ...S.syncSubBtn, width: "100%", justifyContent: "center", marginTop: 8 }}
+            disabled={!sUrl || !sToken || diagBusy}
+            onClick={async () => { setDiagBusy(true); setDiag("診断中…"); try { const r = await onDiagnose(); setDiag(r); } catch (e) { setDiag("診断に失敗しました: " + String(e.message || e)); } finally { setDiagBusy(false); } }}>
+            {diagBusy ? "診断中…" : "接続を診断（PC・スマホ両方で実行して比較）"}
+          </button>
+          {diag && <pre style={S.diagBox}>{diag}</pre>}
           {syncState && syncState.status !== "idle" && (
             <div style={{ ...S.syncStatus, color: syncStatusColor }}>{syncStatusText()}</div>
           )}
@@ -2842,6 +2878,7 @@ const S = {
   syncToggleLabel: { fontSize: 14, color: C.ink, fontWeight: 600 },
   syncBtnRow: { display: "flex", gap: 8, marginTop: 8 },
   syncSubBtn: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, border: `1px solid ${C.line}`, background: C.panel, color: C.ink, borderRadius: 9, padding: "9px 10px", fontSize: 14, fontWeight: 700 },
+  diagBox: { marginTop: 8, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", fontSize: 13, lineHeight: 1.6, color: C.ink, whiteSpace: "pre-wrap", fontFamily: "inherit", margin: "8px 0 0" },
   syncStatus: { fontSize: 14, fontWeight: 700, marginTop: 8 },
   resetBtn: { border: `1px solid ${C.line}`, background: C.panel2, color: C.ink2, borderRadius: 9, padding: "10px 14px", fontSize: 14, fontWeight: 700 },
   resetBtnConfirm: { border: "1px solid rgba(255,107,107,0.5)", background: "rgba(255,107,107,0.13)", color: "#FF6B6B" },
