@@ -1965,18 +1965,7 @@ function CalendarView({ projects, onOpen }) {
 
   return (
     <div style={S.colWrap}>
-      <div style={S.calMonthStrip} ref={stripRef}>
-        {monthStrip.map((mm) => {
-          const on = mm.y === ym.y && mm.m === ym.m;
-          const label = mm.m === 0 ? `${mm.y}年1月` : `${mm.m + 1}月`;
-          return (
-            <button key={`${mm.y}-${mm.m}`} data-on={on ? "1" : "0"}
-              style={{ ...S.calMonthBtn, ...(on ? S.calMonthBtnOn : {}) }}
-              onClick={() => setYm({ y: mm.y, m: mm.m })}>{label}</button>
-          );
-        })}
-      </div>
-
+      <div style={S.calBlock}>
       <div style={S.calGrid} onTouchStart={onCalTouchStart} onTouchEnd={onCalTouchEnd}>
         {WD.map((w, i) => (
           <div key={w} style={{ ...S.calWd, color: i === 0 ? "#FF6B6B" : i === 6 ? C.ink3 : C.ink3 }}>{w}</div>
@@ -2000,6 +1989,18 @@ function CalendarView({ projects, onOpen }) {
             </button>
           );
         })}
+      </div>
+      <div style={S.calMonthStrip} ref={stripRef}>
+        {monthStrip.map((mm) => {
+          const on = mm.y === ym.y && mm.m === ym.m;
+          const label = mm.m === 0 ? `${mm.y}年1月` : `${mm.m + 1}月`;
+          return (
+            <button key={`${mm.y}-${mm.m}`} data-on={on ? "1" : "0"}
+              style={{ ...S.calMonthBtn, ...(on ? S.calMonthBtnOn : {}) }}
+              onClick={() => setYm({ y: mm.y, m: mm.m })}>{label}</button>
+          );
+        })}
+      </div>
       </div>
 
       <div style={S.calDetail}>
@@ -2609,7 +2610,8 @@ const S = {
 
   /* calendar */
   calBar: { display: "flex", alignItems: "center", gap: 10 },
-  calMonthStrip: { display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 12, scrollbarWidth: "none" },
+  calBlock: { display: "flex", flexDirection: "column", gap: 10 },
+  calMonthStrip: { display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2, scrollbarWidth: "none" },
   calMonthBtn: { flexShrink: 0, border: `1px solid ${C.line}`, background: C.panel, color: C.ink2, borderRadius: 999, padding: "7px 15px", fontSize: 15, fontWeight: 700, whiteSpace: "nowrap", fontFamily: F.disp },
   calMonthBtnOn: { background: C.accent, borderColor: C.accent, color: "#fff" },
   calNav: { border: `1px solid ${C.line}`, background: C.panel, borderRadius: 9, padding: 7, display: "flex", color: C.ink },
