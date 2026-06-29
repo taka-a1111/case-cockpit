@@ -459,7 +459,7 @@ export default function App() {
     if (!s.on || !s.url || !s.token) return;
     dirtyRef.current = true;
     if (pushTimer.current) clearTimeout(pushTimer.current);
-    pushTimer.current = setTimeout(() => runPush(s), 600);
+    pushTimer.current = setTimeout(() => runPush(s), 300);
   };
 
   // クラウドから取得し、サーバが新しければ取り込む（他端末の変更を反映）
@@ -541,13 +541,13 @@ export default function App() {
     })();
   }, []);
 
-  // 端末がアクティブになったら最新を取得。定期的（4秒）にも取得して常に最新を反映
+  // 端末がアクティブになったら最新を取得。定期的（2秒）にも取得して常に最新を反映
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === "visible") cloudPull(); };
     const onFocus = () => cloudPull();
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", onFocus);
-    const id = setInterval(() => { if (document.visibilityState === "visible") cloudPull(); }, 4000);
+    const id = setInterval(() => { if (document.visibilityState === "visible") cloudPull(); }, 2000);
     return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onFocus); clearInterval(id); };
   }, []);
 
@@ -1556,9 +1556,19 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
     const empty = !d.company && !d.work && !d.note && !d.summary && !d.received
       && (!d.tasks || d.tasks.length === 0) && !d.deadline && !d.start && !d.reward && !d.replyUrl && !d.replyDraft;
     if (empty) return; // 新規で実質空なら保存しない
-    const t = setTimeout(() => { onAutoSave && onAutoSave(d); setAutoSaved(true); setTimeout(() => setAutoSaved(false), 1200); }, 600);
+    const t = setTimeout(() => { onAutoSave && onAutoSave(d); setAutoSaved(true); setTimeout(() => setAutoSaved(false), 1200); }, 350);
     return () => clearTimeout(t);
   }, [d]);
+
+  // どんな閉じ方（戻る・スワイプ・スクリム・Enter）でも、アンマウント時に最新を確実に保存（反映漏れ防止）
+  const dRef = useRef(d);
+  useEffect(() => { dRef.current = d; }, [d]);
+  useEffect(() => () => {
+    const dd = dRef.current;
+    const empty = !dd.company && !dd.work && !dd.note && !dd.summary && !dd.received
+      && (!dd.tasks || dd.tasks.length === 0) && !dd.deadline && !dd.start && !dd.reward && !dd.replyUrl && !dd.replyDraft;
+    if (!empty && onAutoSave) onAutoSave(dd);
+  }, []);
 
   // 閉じる前に未保存の変更を確実に保存
   const closeWithSave = () => {
@@ -1824,6 +1834,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
             <textarea style={{ ...S.infoInput, minHeight: 48 }} value={d.note} placeholder="詳細" rows={2}
               onChange={(e) => set("note", e.target.value)} />
           </div>
+          <NoteLinks text={d.note} indent={28} />
 
           <div style={S.infoRow}>
             <Coins size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
@@ -1955,12 +1966,13 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                   </button>
                   <input style={{ ...S.taskInput, ...(t.done ? S.trowDone : {}) }} value={t.title}
                     autoFocus={t.id === justAddedId}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); onClose(); } }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); closeWithSave(); } }}
                     placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
                   <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#616B7A" /></button>
                 </div>
                 <textarea style={S.taskNoteInput} value={t.note || ""} rows={1}
                   placeholder="詳細・メモ" onChange={(e) => setTask(t.id, "note", e.target.value)} />
+                <NoteLinks text={t.note} indent={0} />
                 <div style={S.taskEditDates}>
                   <Clock size={15} color={C.ink3} strokeWidth={2} style={{ flexShrink: 0 }} />
                   <DateField value={t.start} placeholder="いつやる" onChange={(v) => setTask(t.id, "start", v)} />
@@ -2310,6 +2322,7 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
             <textarea style={S.taskSheetNote} value={task.note || ""} placeholder="詳細・メモ" rows={2}
               onChange={(e) => onUpdate({ note: e.target.value })} />
           </div>
+          <NoteLinks text={task.note} indent={28} />
           <div style={S.infoRow}>
             <Clock size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <DateField value={task.start} placeholder="いつやる" onChange={(v) => onUpdate({ start: v })} autoOpen={focus === "date"} />
@@ -2431,6 +2444,56 @@ function urlHint(platform) {
   }
 }
 // 返信先URLから「○○を開く」ラベルとアクセント色を判定
+// 詳細欄(note)内のURLを抽出し、表示ラベルを決める。
+// 同じ行でURLの前に書いた語があれば、それを表示名に使う（例: 「見積書 https://...」）。
+// 無ければ Google系は種別名（ファイル名はブラウザからは取得不可）、その他はドメイン名。
+function gDocKind(url) {
+  if (/docs\.google\.com\/spreadsheets/.test(url)) return "スプレッドシート";
+  if (/docs\.google\.com\/document/.test(url)) return "ドキュメント";
+  if (/docs\.google\.com\/presentation/.test(url)) return "スライド";
+  if (/(drive|forms)\.google\.com/.test(url)) return url.includes("forms") ? "フォーム" : "ドライブ";
+  return null;
+}
+function extractLinks(text) {
+  if (!text) return [];
+  const out = [];
+  for (const rawLine of String(text).split(/\r?\n/)) {
+    const re = /https?:\/\/[^\s　]+/g;
+    let m, first = true;
+    while ((m = re.exec(rawLine))) {
+      const url = m[0].replace(/[)\]＞」｝、。，．,.]+$/, ""); // 末尾の句読点・閉じ括弧を除去
+      let label = "";
+      if (first) {
+        label = rawLine.slice(0, m.index)
+          .replace(/[\s　:：｜|/・>＞=＝\-—–]+$/, "")
+          .replace(/^[・\-\s　•]+/, "").trim();
+      }
+      if (!label) {
+        const k = gDocKind(url);
+        if (k) label = "Google " + k;
+        else { try { label = new URL(url).hostname.replace(/^www\./, ""); } catch { label = url; } }
+      }
+      out.push({ url, label });
+      first = false;
+    }
+  }
+  return out;
+}
+function NoteLinks({ text, indent = 0 }) {
+  const links = extractLinks(text);
+  if (!links.length) return null;
+  return (
+    <div style={{ ...S.noteLinkRow, marginLeft: indent }}>
+      {links.map((l, i) => (
+        <a key={i} href={l.url} target="_blank" rel="noopener noreferrer" style={S.noteLinkChip}
+          onClick={(e) => e.stopPropagation()} title={l.url}>
+          <Link2 size={13} color={C.accent} strokeWidth={2.2} style={{ flexShrink: 0 }} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.label}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
 function linkInfo(url) {
   if (!url) return null;
   if (url.includes("chatwork")) return { label: "Chatworkを開く", short: "Chatwork", color: "#6B8AFF" };
@@ -2962,6 +3025,9 @@ const S = {
   addInlineBtns: { display: "flex", gap: 6, justifyContent: "flex-end" },
   addInlineCancel: { border: `1px solid ${C.line}`, background: C.panel, borderRadius: 8, padding: "6px 11px", fontSize: 14, fontWeight: 600, color: C.ink2 },
   addInlineAdd: { border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "6px 14px", fontSize: 14, fontWeight: 700 },
+
+  noteLinkRow: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 },
+  noteLinkChip: { display: "inline-flex", alignItems: "center", gap: 5, maxWidth: 260, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 13.5, fontWeight: 600, color: C.accent, textDecoration: "none" },
 };
 
 
