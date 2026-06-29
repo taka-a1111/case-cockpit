@@ -407,6 +407,7 @@ export default function App() {
   const syncRef = useRef(sync);    // イベント内で最新の同期設定を参照
   const projectsRef = useRef(projects);
   const pullingRef = useRef(false);
+  const pushingRef = useRef(false); // クラウド保存が実行中か（多重送信を防ぐ）
   useEffect(() => { syncRef.current = sync; }, [sync]);
   useEffect(() => { projectsRef.current = projects; }, [projects]);
 
@@ -421,27 +422,44 @@ export default function App() {
     saveMeta();
   };
 
-  // クラウドへ保存（デバウンス）。別端末が先に更新していたらサーバ版を取り込む（消失防止）
-  const pushCloud = (data, cfg) => {
+  // 実際のクラウド保存。常に最新(projectsRef.current)を送る。失敗してもdirtyを残して
+  // 自動で再送するため、push失敗で同期が止まる（=以前のデッドロック）を起こさない。
+  const runPush = async (cfg) => {
+    const s = cfg || syncRef.current;
+    if (!s.on || !s.url || !s.token) return;
+    if (pushingRef.current) return;          // 実行中なら待つ（終了時に未送信分を再キック）
+    pushingRef.current = true;
+    setSyncState((v) => ({ ...v, status: "syncing" }));
+    let failed = false;
+    try {
+      const res = await gasPost(s, projectsRef.current, revRef.current);
+      if (res.conflict && res.data) {
+        await adopt(res.data, res.rev);       // 別端末が先に更新→取り込む（adopt内でdirty=false）
+        setSyncState({ status: "ok", at: Date.now(), msg: "別の端末の変更を反映しました" });
+      } else {
+        revRef.current = res.rev; dirtyRef.current = false; saveMeta();
+        setSyncState({ status: "ok", at: Date.now(), msg: "" });
+      }
+    } catch (e) {
+      failed = true;
+      setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) });
+    } finally {
+      pushingRef.current = false;
+      // 未送信が残っていれば再キック。失敗時は少し待ってリトライ（恒久デッドロック防止）。
+      if (dirtyRef.current) {
+        if (pushTimer.current) clearTimeout(pushTimer.current);
+        pushTimer.current = setTimeout(() => runPush(), failed ? 2500 : 400);
+      }
+    }
+  };
+
+  // 変更を検知したら600msデバウンスで保存をキック（連打をまとめる）
+  const schedulePush = (cfg) => {
     const s = cfg || syncRef.current;
     if (!s.on || !s.url || !s.token) return;
     dirtyRef.current = true;
     if (pushTimer.current) clearTimeout(pushTimer.current);
-    pushTimer.current = setTimeout(async () => {
-      setSyncState((v) => ({ ...v, status: "syncing" }));
-      try {
-        const res = await gasPost(s, data, revRef.current);
-        if (res.conflict && res.data) {
-          await adopt(res.data, res.rev);
-          setSyncState({ status: "ok", at: Date.now(), msg: "別の端末の変更を反映しました" });
-        } else {
-          revRef.current = res.rev; dirtyRef.current = false; saveMeta();
-          setSyncState({ status: "ok", at: Date.now(), msg: "" });
-        }
-      } catch (e) {
-        setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) });
-      }
-    }, 1000);
+    pushTimer.current = setTimeout(() => runPush(s), 600);
   };
 
   // クラウドから取得し、サーバが新しければ取り込む（他端末の変更を反映）
@@ -508,12 +526,12 @@ export default function App() {
             if (remote.rev > revRef.current && remoteReal) {
               await adopt(remote.data, remote.rev); // サーバが新しい→取り込む
             } else if (!remoteReal) {
-              pushCloud(localNorm, cfg); // サーバが空→ローカルを初期データとして送る
+              schedulePush(cfg); // サーバが空→ローカルを初期データとして送る
             } else {
               revRef.current = remote.rev; saveMeta();
             }
           } else {
-            pushCloud(localNorm, cfg); // サーバが空→ローカルを初期データとして送る
+            schedulePush(cfg); // サーバが空→ローカルを初期データとして送る
           }
           setSyncState({ status: "ok", at: Date.now(), msg: "" });
         } catch (e) {
@@ -523,20 +541,20 @@ export default function App() {
     })();
   }, []);
 
-  // 端末がアクティブになったら最新を取得。定期的（20秒）にも取得して常に最新を反映
+  // 端末がアクティブになったら最新を取得。定期的（4秒）にも取得して常に最新を反映
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === "visible") cloudPull(); };
     const onFocus = () => cloudPull();
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", onFocus);
-    const id = setInterval(() => { if (document.visibilityState === "visible") cloudPull(); }, 12000);
+    const id = setInterval(() => { if (document.visibilityState === "visible") cloudPull(); }, 4000);
     return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onFocus); clearInterval(id); };
   }, []);
 
   const persist = async (next) => {
     setProjects(next); projectsRef.current = next; dirtyRef.current = true;
     try { await window.storage.set(STORE_KEY, JSON.stringify(next)); } catch {}
-    pushCloud(next);
+    schedulePush();
   };
 
   // 同期設定の保存
@@ -608,8 +626,9 @@ export default function App() {
       const next = exists
         ? prev.map((p) => (p.id === draft.id ? draft : p))
         : [{ ...draft, createdAt: Date.now() }, ...prev];
+      projectsRef.current = next; dirtyRef.current = true; // ★最新を即時反映してから送る
       try { window.storage.set(STORE_KEY, JSON.stringify(next)); } catch {}
-      pushCloud(next);
+      schedulePush();
       return next;
     });
   };
@@ -675,8 +694,9 @@ export default function App() {
   };
   const commitOrder = () => {
     setProjects((prev) => {
+      projectsRef.current = prev; dirtyRef.current = true; // ★並び替え結果を即時反映してから送る
       try { window.storage.set(STORE_KEY, JSON.stringify(prev)); } catch {}
-      pushCloud(prev);
+      schedulePush();
       return prev;
     });
   };
