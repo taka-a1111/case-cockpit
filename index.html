@@ -300,7 +300,7 @@ const dueItemsOf = (p) => {
   (p.tasks || []).forEach((t) => {
     if (!t.done && t.kind !== "reply") {
       const n = daysUntil(taskJudgeDate(t));
-      if (n !== null) arr.push({ n, label: t.title || "（無題のタスク）", isDeadline: false, byStart: !!t.start });
+      if (n !== null) arr.push({ n, label: t.title || "（無題のタスク）", isDeadline: false, byStart: !!t.start, tid: t.id });
     }
   });
   return arr.sort((a, b) => a.n - b.n);
@@ -1008,7 +1008,10 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                       <span style={S.dueTaskList}>
                         {dueItems.map((it, idx) => (
                           <span key={idx} style={S.dueTaskRow}>
-                            <span style={S.dueTaskName}>{it.isDeadline ? "📅 " : it.byStart ? "▶ " : ""}{it.label}</span>
+                            {it.tid
+                              ? <span onClick={(e) => { e.stopPropagation(); onToggleTask && onToggleTask(p.id, it.tid); }} style={S.dueTaskCheck} title="タスクを完了"><Circle size={16} color={C.ink3} strokeWidth={2} /></span>
+                              : <span style={S.dueTaskCheck}>{it.isDeadline ? "📅" : ""}</span>}
+                            <span style={S.dueTaskName}>{it.label}</span>
                             <span style={{ ...S.dueTaskDays, color: it.n < 0 ? "#FF6B6B" : "#9AA4B2" }}>{dDays(it.n)}</span>
                           </span>
                         ))}
@@ -2631,6 +2634,7 @@ const S = {
   replyItemDueSub: { fontSize: 14, fontWeight: 700, fontFamily: F.disp },
   dueTaskList: { display: "flex", flexDirection: "column", gap: 4, marginTop: 5 },
   dueTaskRow: { display: "flex", alignItems: "center", gap: 8 },
+  dueTaskCheck: { flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, cursor: "pointer" },
   dueTaskName: { flex: 1, minWidth: 0, fontSize: 15.5, color: C.ink2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   dueTaskDays: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0 },
   replyItemName: { fontWeight: 700, fontSize: 16.5, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
