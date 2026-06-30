@@ -409,6 +409,7 @@ export default function App() {
   const projectsRef = useRef(projects);
   const pullingRef = useRef(false);
   const pushingRef = useRef(false); // クラウド保存が実行中か（多重送信を防ぐ）
+  const pullSuppressRef = useRef(0); // この時刻まではpullを抑制（push直後の往復取得で自分の保存を壊さない）
   useEffect(() => { syncRef.current = sync; }, [sync]);
   useEffect(() => { projectsRef.current = projects; }, [projects]);
 
@@ -439,6 +440,7 @@ export default function App() {
         setSyncState({ status: "ok", at: Date.now(), msg: "別の端末の変更を反映しました" });
       } else {
         revRef.current = res.rev; dirtyRef.current = false; saveMeta();
+        pullSuppressRef.current = Date.now() + 4000; // 保存直後の往復取得を抑制（自分の保存の巻き戻り防止）
         setSyncState({ status: "ok", at: Date.now(), msg: "" });
       }
     } catch (e) {
@@ -469,17 +471,18 @@ export default function App() {
     const force = opts && opts.force;
     if (!s.on || !s.url || !s.token) return;
     if (pullingRef.current) return;
+    if (pushingRef.current) return;                          // 保存実行中は取得しない
+    if (!force && Date.now() < pullSuppressRef.current) return; // 保存直後は往復取得を抑制
     if (dirtyRef.current && !force) return; // 未送信のローカル変更がある間は上書きしない
     pullingRef.current = true;
     try {
       const remote = await gasGet(s);
       if (remote && remote.data && !dirtyRef.current) {
         const remoteReal = remote.data.some((p) => p && p.id !== INBOX_ID);
-        const remoteNorm = normalizeProjects(remote.data);
-        if (remoteReal && JSON.stringify(remoteNorm) !== JSON.stringify(projectsRef.current)) {
-          await adopt(remote.data, remote.rev); // 内容が違う＝他端末で更新あり→取り込む
+        if (remote.rev > revRef.current && remoteReal) {
+          await adopt(remote.data, remote.rev); // サーバのrevが進んだ＝他端末が更新→取り込む
         } else if (remote.rev !== revRef.current) {
-          revRef.current = remote.rev; saveMeta();
+          revRef.current = remote.rev; saveMeta(); // revのみ同期（自分の保存が往復で変質しても取り込まない）
         }
       }
     } catch (e) {
@@ -542,13 +545,13 @@ export default function App() {
     })();
   }, []);
 
-  // 端末がアクティブになったら最新を取得。定期的（2秒）にも取得して常に最新を反映
+  // 端末がアクティブになったら最新を取得。定期的（8秒）にも取得して他端末の更新を反映
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === "visible") cloudPull(); };
     const onFocus = () => cloudPull();
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", onFocus);
-    const id = setInterval(() => { if (document.visibilityState === "visible") cloudPull(); }, 2000);
+    const id = setInterval(() => { if (document.visibilityState === "visible") cloudPull(); }, 8000);
     return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onFocus); clearInterval(id); };
   }, []);
 
@@ -1331,7 +1334,6 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
             <Circle size={18} color="#3A434F" strokeWidth={2.2} />
           </span>
         )}
-        <span style={{ ...S.taskGroupBar, background: PLATFORMS[g.project.platform] || C.accent }} />
         <span style={S.taskGroupName}>{g.project.company}</span>
       </button>
       <div style={{ ...S.list, paddingLeft: 28 }}>
@@ -1556,6 +1558,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   const [mergeMode, setMergeMode] = useState(false);    // 1つのタスクにまとめる
   const [copied, setCopied] = useState(false);
   const [autoSaved, setAutoSaved] = useState(false);
+  const [hideDoneTasks, setHideDoneTasks] = useState(true);
   const isNew = !draft.company && draft.tasks.length === 0;
   const set = (k, v) => setD((p) => ({ ...p, [k]: v }));
   const focusTask = focusTaskId ? d.tasks.find((t) => t.id === focusTaskId) : null;
@@ -1968,9 +1971,15 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
           <div style={S.subtaskHead}>
             <CornerDownRight size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <span style={S.subtaskHeadLabel}>タスク</span>
+            {d.tasks.some((t) => t.done) && (
+              <button style={{ ...S.replyFilter, ...(hideDoneTasks ? S.replyFilterOn : {}) }}
+                onClick={() => setHideDoneTasks((v) => !v)}>
+                <CheckCircle2 size={13} strokeWidth={2.4} /> 完了を隠す
+              </button>
+            )}
           </div>
           <div style={S.taskEditList}>
-            {d.tasks.map((t) => (
+            {d.tasks.filter((t) => !(hideDoneTasks && t.done)).map((t) => (
               <div key={t.id} style={S.taskEditRow}>
                 <div style={S.taskEditTop}>
                   <button style={S.checkBtn} onClick={() => setTask(t.id, "done", !t.done)}>
@@ -2396,23 +2405,77 @@ function RepeatField({ value, onChange }) {
     </div>
   );
 }
+function CalendarModal({ value, onChange, onClose }) {
+  const now = new Date();
+  const base = value ? new Date(value + "T00:00:00") : now;
+  const [ym, setYm] = useState({ y: base.getFullYear(), m: base.getMonth() });
+  const pad = (n) => String(n).padStart(2, "0");
+  const key = (y, m, d) => `${y}-${pad(m + 1)}-${pad(d)}`;
+  const todayKey = key(now.getFullYear(), now.getMonth(), now.getDate());
+  const startDow = new Date(ym.y, ym.m, 1).getDay();
+  const daysInMonth = new Date(ym.y, ym.m + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let dd = 1; dd <= daysInMonth; dd++) cells.push(dd);
+  while (cells.length % 7 !== 0) cells.push(null);
+  const prevM = () => setYm((s) => (s.m === 0 ? { y: s.y - 1, m: 11 } : { y: s.y, m: s.m - 1 }));
+  const nextM = () => setYm((s) => (s.m === 11 ? { y: s.y + 1, m: 0 } : { y: s.y, m: s.m + 1 }));
+  const pick = (k) => { onChange(k); onClose(); };
+  const stop = (e) => e.stopPropagation();
+  return (
+    <div style={S.calModalScrim} onPointerDown={(e) => { stop(e); onClose(); }} onClick={stop}>
+      <div style={S.calModalCard} onPointerDown={stop} onClick={stop}>
+        <div style={S.calModalHead}>
+          <span style={S.calModalTitle}>{ym.y}年 {ym.m + 1}月</span>
+          <div style={S.calModalNav}>
+            <button style={S.calModalNavBtn} onClick={prevM}><ChevronLeft size={22} /></button>
+            <button style={S.calModalNavBtn} onClick={nextM}><ChevronRight size={22} /></button>
+          </div>
+        </div>
+        <div style={S.calModalGrid}>
+          {WD_JP.map((w, i) => (
+            <div key={w} style={{ ...S.calModalWd, color: i === 0 ? "#FF6B6B" : C.ink3 }}>{w}</div>
+          ))}
+          {cells.map((dd, i) => {
+            if (dd === null) return <div key={i} />;
+            const k = key(ym.y, ym.m, dd);
+            const isToday = k === todayKey;
+            const isSel = k === value;
+            const dow = i % 7;
+            const holiday = isHoliday(k);
+            return (
+              <button key={i} onClick={() => pick(k)}
+                style={{ ...S.calModalCell,
+                  ...(isToday && !isSel ? S.calModalCellToday : {}),
+                  ...(isSel ? S.calModalCellSel : {}),
+                  color: isSel ? "#fff" : (dow === 0 || holiday) ? "#FF6B6B" : C.ink }}>
+                {dd}
+              </button>
+            );
+          })}
+        </div>
+        <div style={S.calModalFoot}>
+          <button style={S.calModalClear} onClick={() => { onChange(""); onClose(); }}>削除</button>
+          <button style={S.calModalToday} onClick={() => pick(todayKey)}>今日</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 function DateField({ value, placeholder, onChange, autoOpen }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (autoOpen && ref.current) { try { ref.current.focus(); ref.current.showPicker && ref.current.showPicker(); } catch {} }
-  }, [autoOpen]);
-  const open = (e) => { e.stopPropagation(); try { ref.current.showPicker ? ref.current.showPicker() : ref.current.focus(); } catch {} };
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (autoOpen) setOpen(true); }, [autoOpen]);
   const lab = value ? dateLabelJP(value) : null;
   return (
     <span style={S.dateField} onPointerDown={(e) => e.stopPropagation()}>
-      <span style={value ? { ...S.dateFieldVal, ...(lab && lab.overdue ? S.dateFieldOver : {}) } : S.dateFieldPlaceholder} onClick={open}>
+      <span style={value ? { ...S.dateFieldVal, ...(lab && lab.overdue ? S.dateFieldOver : {}) } : S.dateFieldPlaceholder}
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}>
         {value ? lab.text : placeholder}
       </span>
       {value && (
         <button style={S.dateFieldClear} onClick={(e) => { e.stopPropagation(); onChange(""); }}><X size={13} /></button>
       )}
-      <input ref={ref} type="date" value={value || ""} style={S.cardDateHidden}
-        onChange={(e) => onChange(e.target.value)} />
+      {open && <CalendarModal value={value} onChange={onChange} onClose={() => setOpen(false)} />}
     </span>
   );
 }
@@ -2736,6 +2799,20 @@ const S = {
   dateFieldVal: { fontSize: 16, fontWeight: 600, color: C.accent, cursor: "pointer", padding: "2px 0" },
   dateFieldOver: { color: "#FF8A8A" },
   dateFieldClear: { display: "inline-flex", border: "none", background: "transparent", color: C.ink3, padding: 2, cursor: "pointer" },
+  calModalScrim: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 120, padding: 16 },
+  calModalCard: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 18, padding: "16px 16px 12px", width: 372, maxWidth: "94vw", boxShadow: "0 24px 64px rgba(0,0,0,0.55)" },
+  calModalHead: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, padding: "2px 4px 6px" },
+  calModalTitle: { fontFamily: F.disp, fontWeight: 700, fontSize: 20, color: C.ink },
+  calModalNav: { display: "flex", gap: 2 },
+  calModalNavBtn: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 40, height: 40, borderRadius: 12, border: "none", background: "transparent", color: C.ink2 },
+  calModalGrid: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 },
+  calModalWd: { textAlign: "center", fontSize: 13, fontWeight: 600, padding: "2px 0 8px" },
+  calModalCell: { display: "flex", alignItems: "center", justifyContent: "center", aspectRatio: "1 / 1", border: "none", background: "transparent", borderRadius: "50%", fontSize: 17, fontWeight: 600, fontFamily: F.disp, color: C.ink, cursor: "pointer" },
+  calModalCellSel: { background: C.accent, color: "#fff" },
+  calModalCellToday: { background: C.panel2 },
+  calModalFoot: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, padding: "0 4px" },
+  calModalClear: { border: "none", background: "transparent", color: C.ink3, fontSize: 14.5, fontWeight: 600, padding: "8px 6px" },
+  calModalToday: { border: "none", background: "transparent", color: C.accent, fontSize: 14.5, fontWeight: 700, padding: "8px 6px" },
   cardMetaRow: { display: "none" },
   cardReward: { fontFamily: F.disp, fontWeight: 800, fontSize: 16, fontVariantNumeric: "tabular-nums", letterSpacing: 0.3, color: C.ink2, marginLeft: "auto" },
   cardDue: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
