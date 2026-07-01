@@ -410,6 +410,7 @@ export default function App() {
   const pullingRef = useRef(false);
   const pushingRef = useRef(false); // クラウド保存が実行中か（多重送信を防ぐ）
   const pullSuppressRef = useRef(0); // この時刻まではpullを抑制（push直後の往復取得で自分の保存を壊さない）
+  const lastEditRef = useRef(0);     // 最後にローカル編集した時刻（直近の編集はローカルを正とし、pullで上書きしない）
   useEffect(() => { syncRef.current = sync; }, [sync]);
   useEffect(() => { projectsRef.current = projects; }, [projects]);
 
@@ -460,6 +461,7 @@ export default function App() {
   const schedulePush = (cfg) => {
     const s = cfg || syncRef.current;
     if (!s.on || !s.url || !s.token) return;
+    lastEditRef.current = Date.now(); // 直近の編集時刻を記録（pullの上書き防止に使う）
     dirtyRef.current = true;
     if (pushTimer.current) clearTimeout(pushTimer.current);
     pushTimer.current = setTimeout(() => runPush(s), 300);
@@ -472,6 +474,7 @@ export default function App() {
     if (!s.on || !s.url || !s.token) return;
     if (pullingRef.current) return;
     if (pushingRef.current) return;                          // 保存実行中は取得しない
+    if (!force && Date.now() - lastEditRef.current < 15000) return; // 直近15秒の編集はローカルを正とし、取り込まない
     if (!force && Date.now() < pullSuppressRef.current) return; // 保存直後は往復取得を抑制
     if (dirtyRef.current && !force) return; // 未送信のローカル変更がある間は上書きしない
     pullingRef.current = true;
@@ -545,14 +548,13 @@ export default function App() {
     })();
   }, []);
 
-  // 端末がアクティブになったら最新を取得。定期的（8秒）にも取得して他端末の更新を反映
+  // 他端末の変更は「アプリに戻ったとき」だけ取得（定期ポーリングは廃止＝編集中に勝手に戻らない）
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === "visible") cloudPull(); };
     const onFocus = () => cloudPull();
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", onFocus);
-    const id = setInterval(() => { if (document.visibilityState === "visible") cloudPull(); }, 8000);
-    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onFocus); clearInterval(id); };
+    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onFocus); };
   }, []);
 
   const persist = async (next) => {
