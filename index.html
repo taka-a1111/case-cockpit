@@ -850,6 +850,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
   const [sortMode, setSortMode] = useState("manual");
   const [sortOpen, setSortOpen] = useState(false);
   const [dragId, setDragId] = useState(null);
+  const wide = useWideScreen();
   useEffect(() => {
     if (!sortOpen) return;
     const close = (e) => { if (!e.target.closest || !e.target.closest("[data-sortwrap]")) setSortOpen(false); };
@@ -929,7 +930,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
     : panelList.length;
 
   return (
-    <div style={S.colWrap}>
+    <div style={{ ...S.colWrap, ...(wide ? { maxWidth: 980 } : {}) }}>
       <div style={S.kpiRow}>
         {cards.map((c) => {
           const opened = openCard === c.key;
@@ -1062,9 +1063,31 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
           )}
         </div>
         {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
-        <div style={S.grid}>
-          {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
-        </div>
+        {wide ? (
+          <div style={S.focusKanban}>
+            {[["進行中", "#9AA4B2"], ["相手待ち", "#D9A23B"], ["支払い待ち", "#51CF66"]].map(([status, color]) => {
+              const items = cardList.filter((p) => p.status === status);
+              return (
+                <div key={status} style={S.focusKanCol}>
+                  <div style={S.focusKanHead}>
+                    <span style={{ ...S.laneDot, background: color }} />
+                    <span style={S.focusKanTitle}>{status}</span>
+                    <span style={S.focusKanCount}>{items.length}</span>
+                  </div>
+                  <div style={S.focusKanBody}>
+                    {items.length === 0
+                      ? <div style={S.focusKanEmpty}>なし</div>
+                      : items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={S.grid}>
+            {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+          </div>
+        )}
       </section>
     </div>
   );
@@ -1212,7 +1235,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
         <span style={S.cardCompany}>{p.company}</span>
         {draggable && (
           <span style={S.cardGrip} title="ドラッグして並び替え"
-            onPointerDown={(e) => { e.stopPropagation(); const card = e.currentTarget.closest("[data-pid]"); if (card && onDragHandle) onDragHandle(p.id, card, e.pointerId); }}
+            onPointerDown={(e) => { e.stopPropagation(); if (onDragHandle) onDragHandle(p.id, e.currentTarget, e.pointerId); }}
             onClick={(e) => e.stopPropagation()}>
             <GripVertical size={19} color={C.ink3} strokeWidth={2} />
           </span>
@@ -2785,6 +2808,13 @@ const S = {
 
   /* card grid — PCでも1〜2列に抑える */
   grid: { display: "grid", gridTemplateColumns: "1fr", gap: 14, alignItems: "start", maxWidth: 720, marginLeft: "auto", marginRight: "auto" },
+  focusKanban: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, alignItems: "start" },
+  focusKanCol: { display: "flex", flexDirection: "column", minWidth: 0 },
+  focusKanHead: { display: "flex", alignItems: "center", gap: 8, padding: "0 2px 14px" },
+  focusKanTitle: { fontSize: 14.5, fontWeight: 700, color: C.ink2 },
+  focusKanCount: { fontSize: 13, fontWeight: 700, color: C.ink3 },
+  focusKanBody: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0 },
+  focusKanEmpty: { color: C.ink3, fontSize: 13, padding: "6px 2px" },
   card: {
     position: "relative", textAlign: "left", overflow: "hidden",
     display: "flex", flexDirection: "column", gap: 0, padding: "16px 18px",
