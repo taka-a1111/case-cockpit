@@ -32,6 +32,7 @@ window.storage = {
 <body>
 <div id="root"><div id="boot">読み込み中…（初回はライブラリ取得のため数秒かかります）</div></div>
 <script type="text/babel" data-type="module" data-presets="react">
+
 import React, { useState, useEffect, useMemo, useRef } from "https://esm.sh/react@18.2.0";
 import { createRoot } from "https://esm.sh/react-dom@18.2.0/client?deps=react@18.2.0";
 import {
@@ -265,6 +266,7 @@ function normalizeProjects(arr) {
     status: STATUS_MIGRATE[p.status] || p.status || "進行中",
     start: p.start ?? "",
     received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
+    links: (Array.isArray(p.links) ? p.links : []).filter((l) => l && (l.url || l.label)).map((l) => ({ id: l.id || uid(), label: l.label ?? "", url: l.url ?? "" })),
     tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "", note: t.note ?? "", repeat: t.repeat ?? null })),
   }));
   if (!list.some((p) => p.id === INBOX_ID)) list = [...list, makeInbox()];
@@ -1284,13 +1286,22 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
         </div>
       )}
 
-      {li && (
+      {(li || (p.links || []).some((l) => l.url)) && (
         <div style={S.cardFoot}>
-          <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
-            style={{ ...S.openLinkCard, color: li.color, background: li.color + "22" }}
-            onPointerDown={stop} onClick={stop} title={li.label}>
-            <ExternalLink size={13} strokeWidth={2.4} />{li.short}
-          </a>
+          {li && (
+            <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
+              style={{ ...S.openLinkCard, color: li.color, background: li.color + "22" }}
+              onPointerDown={stop} onClick={stop} title={li.label}>
+              <ExternalLink size={13} strokeWidth={2.4} />{li.short}
+            </a>
+          )}
+          {(p.links || []).filter((l) => l.url).slice(0, 3).map((l) => (
+            <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer"
+              style={S.openLinkCard}
+              onPointerDown={stop} onClick={stop} title={linkLabelOf(l)}>
+              <ExternalLink size={13} strokeWidth={2.4} />{linkLabelOf(l)}
+            </a>
+          ))}
         </div>
       )}
     </div>
@@ -1915,6 +1926,12 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
             <select style={S.infoSelect} value={d.status} onChange={(e) => set("status", e.target.value)}>
               {STATUSES.map((x) => <option key={x}>{x}</option>)}
             </select>
+          </div>
+
+          {/* ===== リンク（Claude / GitHub / 公開URL など） ===== */}
+          <div style={S.linkRow}>
+            <Link2 size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
+            <LinksField links={d.links} onChange={(v) => set("links", v)} />
           </div>
 
           {/* ===== やり取り（AI返信案） ===== */}
@@ -2617,10 +2634,58 @@ function linkInfo(url) {
   if (url.includes("coconala")) return { label: "ココナラを開く", short: "ココナラ", color: "#6B8AFF" };
   return { label: "返信先を開く", short: "開く", color: C.accent };
 }
+// 案件リンク（links[]）のラベル/短縮名を決める。ユーザー指定ラベルを最優先、無ければURLから推定。
+function urlAutoLabel(url) {
+  if (!url) return "";
+  if (/claude\.ai/.test(url)) return "Claude";
+  if (/github\.com/.test(url)) return "GitHub";
+  if (/vercel\.app/.test(url)) return "公開URL";
+  if (/chatwork/.test(url)) return "Chatwork";
+  if (/crowdworks/.test(url)) return "クラウドワークス";
+  if (/lancers/.test(url)) return "ランサーズ";
+  if (/coconala/.test(url)) return "ココナラ";
+  const g = gDocKind(url); if (g) return "Google " + g;
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+}
+function linkLabelOf(l) { return (l && l.label && l.label.trim()) ? l.label.trim() : urlAutoLabel(l && l.url); }
+// 案件詳細のリンク編集フィールド（Claude / GitHub / 公開URL などをワンタップ追加）
+function LinksField({ links, onChange }) {
+  const list = Array.isArray(links) ? links : [];
+  const update = (id, patch) => onChange(list.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const remove = (id) => onChange(list.filter((l) => l.id !== id));
+  const add = (label) => onChange([...list, { id: uid(), label: label || "", url: "" }]);
+  return (
+    <div style={S.linksWrap}>
+      {list.map((l) => (
+        <div key={l.id} style={S.linkEditRow}>
+          <input style={S.linkLabelInput} value={l.label} placeholder="ラベル"
+            onChange={(e) => update(l.id, { label: e.target.value })} />
+          <input style={S.linkUrlInput} value={l.url} type="url" placeholder="URLを貼り付け"
+            onChange={(e) => update(l.id, { url: e.target.value })} />
+          {l.url ? (
+            <a href={l.url} target="_blank" rel="noopener noreferrer" style={S.linkOpenMini} title="開く">
+              <ExternalLink size={15} strokeWidth={2.4} />
+            </a>
+          ) : null}
+          <button style={S.linkDelMini} onClick={() => remove(l.id)} title="削除">
+            <Trash2 size={15} strokeWidth={2.2} />
+          </button>
+        </div>
+      ))}
+      <div style={S.linkPresetRow}>
+        {["Claude", "GitHub", "公開URL", "その他"].map((pl) => (
+          <button key={pl} style={S.linkPresetBtn} onClick={() => add(pl === "その他" ? "" : pl)}>
+            <Plus size={12} strokeWidth={2.8} />{pl}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 function blankDraft() {
   return { id: uid(), company: "", platform: "クラウドワークス", work: "", reward: "",
     status: "進行中", reply: "なし", deadline: "", start: "", note: "",
-    received: "", replyDraft: "", repliedAt: null, replyUrl: "", replyHistory: [], summary: "", tasks: [] };
+    received: "", replyDraft: "", repliedAt: null, replyUrl: "", replyHistory: [], summary: "", links: [], tasks: [] };
 }
 function Fonts() {
   return (<style>{`
@@ -2884,7 +2949,7 @@ const S = {
   cardAddInput: { flex: 1, minWidth: 0, background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 8, padding: "8px 10px", fontSize: 14.5, color: C.ink },
   cardAddDone: { border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "8px 14px", fontSize: 14, fontWeight: 700, flexShrink: 0 },
   cardAddCancel: { border: "none", background: "transparent", color: C.ink3, fontSize: 18, fontWeight: 700, padding: "0 4px", flexShrink: 0 },
-  cardFoot: { display: "flex", alignItems: "center", gap: 8, paddingTop: 13, marginTop: 14, borderTop: `1px solid ${C.line}` },
+  cardFoot: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, paddingTop: 13, marginTop: 14, borderTop: `1px solid ${C.line}` },
   cardAddTaskBtn: { display: "inline-flex", alignItems: "center", gap: 5, border: `1px solid ${C.line}`, background: C.panel2, color: C.ink2, borderRadius: 9, padding: "7px 12px", fontSize: 13.5, fontWeight: 700 },
   cardTasksCount: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, color: C.ink3, fontWeight: 700, fontFamily: F.disp },
   cardTasks: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, color: C.ink3, fontWeight: 600, marginLeft: "auto", fontFamily: F.disp },
@@ -3169,10 +3234,21 @@ const S = {
 
   noteLinkRow: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 },
   noteLinkChip: { display: "inline-flex", alignItems: "center", gap: 5, maxWidth: 260, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: "5px 9px", fontSize: 13.5, fontWeight: 600, color: C.accent, textDecoration: "none" },
+
+  linkRow: { display: "flex", alignItems: "flex-start", gap: 14, padding: "10px 2px", borderTop: `1px solid ${C.line}` },
+  linksWrap: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 8, paddingTop: 2 },
+  linkEditRow: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  linkLabelInput: { width: 88, flexShrink: 0, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 9px", fontSize: 14, color: C.ink },
+  linkUrlInput: { flex: 1, minWidth: 120, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 9px", fontSize: 14, color: C.ink },
+  linkOpenMini: { flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 8, color: C.accent, background: "rgba(107,138,255,0.14)", textDecoration: "none" },
+  linkDelMini: { flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", color: C.ink3 },
+  linkPresetRow: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 },
+  linkPresetBtn: { display: "inline-flex", alignItems: "center", gap: 3, border: `1px solid ${C.line}`, background: C.panel2, color: C.ink2, borderRadius: 8, padding: "5px 10px", fontSize: 13, fontWeight: 600 },
 };
 
 
 createRoot(document.getElementById("root")).render(React.createElement(App));
+
 
 </script>
 </body>
