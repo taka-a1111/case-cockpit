@@ -56,7 +56,7 @@ import {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-01c"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-01d"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -2791,15 +2791,80 @@ function urlAutoLabel(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
 }
 function linkLabelOf(l) { return (l && l.label && l.label.trim()) ? l.label.trim() : urlAutoLabel(l && l.url); }
+// リンク編集モーダル。編集中はローカルstateに閉じ込め、閉じる時に親へ確定反映。
+// 1文字ごとに親state（Drawerのd等）を更新すると、fast typing → fast close で
+// controlled inputが最終文字を落とすことがあるため、必ずこの形にする。
+function LinkEditModal({ initial, onSave, onDelete, onClose }) {
+  const [label, setLabel] = useState(initial.label || "");
+  const [url, setUrl] = useState(initial.url || "");
+  const latest = useRef({ label: initial.label || "", url: initial.url || "" });
+  const deleted = useRef(false);
+  const commit = () => {
+    if (deleted.current) { onClose(); return; }
+    onSave({ label: latest.current.label, url: latest.current.url });
+    onClose();
+  };
+  const doDelete = () => { deleted.current = true; onDelete(); };
+  // アンマウント時にも念のため保存（削除済みでない限り）
+  useEffect(() => () => {
+    if (deleted.current) return;
+    onSave({ label: latest.current.label, url: latest.current.url });
+  }, []);
+  const onLabel = (e) => { const v = e.target.value; latest.current.label = v; setLabel(v); };
+  const onUrl = (e) => { const v = e.target.value; latest.current.url = v; setUrl(v); };
+  return (
+    <>
+      <div style={S.linkModalScrim} onClick={commit} />
+      <div style={S.linkModal}>
+        <div style={S.linkModalHead}>
+          <span style={S.drawerTitle}>リンクを編集</span>
+          <button style={S.iconBtn} onClick={commit}><X size={18} /></button>
+        </div>
+        <div style={S.linkModalBody}>
+          <Field label="ラベル">
+            <input style={S.input} value={label} placeholder="例：GitHub"
+              onChange={onLabel}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); commit(); } }}
+              autoFocus={!initial.url} />
+          </Field>
+          <Field label="URL">
+            <input style={S.input} value={url} type="url" placeholder="https://..."
+              onChange={onUrl}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); commit(); } }}
+              autoFocus={!!initial.url && !initial.label} />
+          </Field>
+        </div>
+        <div style={S.linkModalFoot}>
+          <button style={S.linkModalDel} onClick={doDelete}>
+            <Trash2 size={14} strokeWidth={2.2} />削除
+          </button>
+          <button style={S.linkModalClose} onClick={commit}>閉じる</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // 案件詳細のリンク編集フィールド（Claude / GitHub / 公開URL などをワンタップ追加）
 function LinksField({ links, onChange }) {
   const list = Array.isArray(links) ? links : [];
   const [editId, setEditId] = useState(null);
-  const update = (id, patch) => onChange(list.map((l) => (l.id === id ? { ...l, ...patch } : l)));
-  const remove = (id) => { onChange(list.filter((l) => l.id !== id)); setEditId(null); };
+  // 常に最新のlistを参照するためのref（LinkEditModalのアンマウント時保存で使う）
+  const listRef = useRef(list); useEffect(() => { listRef.current = list; }, [list]);
+  const onChangeRef = useRef(onChange); useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+  const updateId = (id, patch) => {
+    const next = listRef.current.map((l) => (l.id === id ? { ...l, ...patch } : l));
+    onChangeRef.current(next);
+  };
+  const removeId = (id) => {
+    const next = listRef.current.filter((l) => l.id !== id);
+    onChangeRef.current(next);
+    setEditId(null);
+  };
   const add = (label) => {
     const id = uid();
-    onChange([...list, { id, label: label || "", url: "" }]);
+    const next = [...listRef.current, { id, label: label || "", url: "" }];
+    onChangeRef.current(next);
     setEditId(id); // 追加直後に編集モーダルを開く（URLをすぐ貼り付けられるように）
   };
   const editing = editId ? list.find((l) => l.id === editId) : null;
@@ -2835,33 +2900,13 @@ function LinksField({ links, onChange }) {
         ))}
       </div>
       {editing && (
-        <>
-          <div style={S.linkModalScrim} onClick={() => setEditId(null)} />
-          <div style={S.linkModal}>
-            <div style={S.linkModalHead}>
-              <span style={S.drawerTitle}>リンクを編集</span>
-              <button style={S.iconBtn} onClick={() => setEditId(null)}><X size={18} /></button>
-            </div>
-            <div style={S.linkModalBody}>
-              <Field label="ラベル">
-                <input style={S.input} value={editing.label} placeholder="例：GitHub"
-                  onChange={(e) => update(editing.id, { label: e.target.value })}
-                  onKeyDown={(e) => { if (e.key === "Enter") setEditId(null); }} autoFocus={!editing.url} />
-              </Field>
-              <Field label="URL">
-                <input style={S.input} value={editing.url} type="url" placeholder="https://..."
-                  onChange={(e) => update(editing.id, { url: e.target.value })}
-                  onKeyDown={(e) => { if (e.key === "Enter") setEditId(null); }} autoFocus={!!editing.url && !editing.label} />
-              </Field>
-            </div>
-            <div style={S.linkModalFoot}>
-              <button style={S.linkModalDel} onClick={() => remove(editing.id)}>
-                <Trash2 size={14} strokeWidth={2.2} />削除
-              </button>
-              <button style={S.linkModalClose} onClick={() => setEditId(null)}>閉じる</button>
-            </div>
-          </div>
-        </>
+        <LinkEditModal
+          key={editing.id}
+          initial={editing}
+          onSave={(patch) => updateId(editing.id, patch)}
+          onDelete={() => removeId(editing.id)}
+          onClose={() => setEditId(null)}
+        />
       )}
     </div>
   );
