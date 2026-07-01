@@ -56,7 +56,7 @@ import {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-01g"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-01i"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -361,22 +361,20 @@ export default function App() {
   const onMainTouchStart = (e) => { const t = e.touches[0]; navSwipe.current = { x: t.clientX, y: t.clientY }; };
   const onMainTouchEnd = (e) => {
     const t = e.changedTouches && e.changedTouches[0]; if (!t) return;
-    const sx = navSwipe.current.x, sy = navSwipe.current.y;
+    const sx = navSwipe.current.x;
     if (sx <= EDGE || sx >= winW() - EDGE) return; // 端から始まったスワイプは「戻る」に任せる
     const dx = t.clientX - navSwipe.current.x, dy = t.clientY - navSwipe.current.y;
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      const H = (typeof window !== "undefined" ? window.innerHeight : 800);
-      const topZone = sy < H * 0.45; // 画面上部＝タブ切替のみ有効
-      if (view === "tasks" && topZone) {
+      if (view === "tasks") {
         const idx = TASK_LANES.findIndex((L) => L.key === activeLane);
         if (dx < 0 && idx < TASK_LANES.length - 1) setActiveLane(TASK_LANES[idx + 1].key);
         else if (dx > 0 && idx > 0) setActiveLane(TASK_LANES[idx - 1].key);
-      } else if (view === "focus" && topZone && !wide) {
+      } else if (view === "focus" && !wide) {
         const idx = FOCUS_STATUSES.findIndex((L) => L.key === activeFocusStatus);
         if (dx < 0 && idx < FOCUS_STATUSES.length - 1) setActiveFocusStatus(FOCUS_STATUSES[idx + 1].key);
         else if (dx > 0 && idx > 0) setActiveFocusStatus(FOCUS_STATUSES[idx - 1].key);
       }
-      // 画面全体の横スワイプ切替は廃止（個別スワイプの誤動作を防ぐため）
+      // カレンダー画面は月移動を calGrid 側で拾う（e.stopPropagation で main まで届かない）
     }
   };
   const [editing, setEditing] = useState(null); // draft object or null
@@ -2170,7 +2168,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                   <button style={S.checkBtn} onClick={() => setTask(t.id, "done", !t.done)}>
                     {t.done ? <CheckCircle2 size={18} color="#51CF66" /> : <Circle size={18} color="#3A434F" />}
                   </button>
-                  <input style={{ ...S.taskInput, ...(t.done ? S.trowDone : {}) }} value={t.title}
+                  <AutoHeightTextarea style={{ ...S.taskInput, ...(t.done ? S.trowDone : {}) }} value={t.title}
                     autoFocus={t.id === justAddedId}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); closeWithSave(); } }}
                     placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
@@ -2534,7 +2532,7 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
         </div>
         <div style={{ ...S.taskSheetBody, ...(wide ? { flex: 1 } : {}) }}>
-          <input style={S.titleInput} value={task.title} placeholder="やること"
+          <AutoHeightTextarea style={S.titleInput} value={task.title} placeholder="やること"
             onChange={(e) => onUpdate({ title: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); onClose(); } }} />
           <div style={S.infoRow}>
@@ -2796,6 +2794,29 @@ function SharePicker({ intent, projects, onPick, onClose }) {
         </div>
       </div>
     </>
+  );
+}
+
+// 内容に合わせて高さを自動調整するテキストエリア。長いタスク名を折り返して全体表示する用途。
+// Enter による改行はデフォルト動作。Enter で閉じたい呼び出し元は onKeyDown で e.preventDefault() する。
+function AutoHeightTextarea({ value, style, ...rest }) {
+  const ref = useRef(null);
+  const resize = () => {
+    const el = ref.current; if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  };
+  useEffect(() => { resize(); }, [value]);
+  useEffect(() => {
+    // マウント直後にも一度、フォント読み込み後の高さで再計算
+    const id = setTimeout(resize, 30);
+    return () => clearTimeout(id);
+  }, []);
+  return (
+    <textarea ref={ref} value={value} rows={1}
+      onInput={resize}
+      style={{ overflow: "hidden", resize: "none", wordBreak: "break-word", whiteSpace: "pre-wrap", ...style }}
+      {...rest} />
   );
 }
 
