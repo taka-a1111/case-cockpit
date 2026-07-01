@@ -1,41 +1,3 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Helm — 案件管理</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap');
-* { box-sizing: border-box; }
-:root { color-scheme: dark; }
-html, body { margin: 0; padding: 0; background: #0F1318; color: #E8ECF2; }
-button { cursor: pointer; font-family: inherit; }
-input, select, textarea { font-family: inherit; outline: none; color: #E8ECF2; background: #212834; }
-input::placeholder, textarea::placeholder { color: #616B7A; }
-select option { background: #212834; color: #E8ECF2; }
-::-webkit-scrollbar { width: 9px; height: 9px; }
-::-webkit-scrollbar-thumb { background: #333B46; border-radius: 6px; }
-@keyframes spin { to { transform: rotate(360deg); } }
-#boot { font-family: 'Noto Sans JP', system-ui, sans-serif; color: #616B7A; padding: 40px; text-align: center; font-size: 14px; }
-</style>
-<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
-<script>
-/* window.storage を localStorage で代替（ブラウザ単体で永続化） */
-window.storage = {
-  get: (k) => { try { const v = localStorage.getItem(k); return Promise.resolve(v != null ? { key: k, value: v, shared: false } : null); } catch(e){ return Promise.resolve(null); } },
-  set: (k, v) => { try { localStorage.setItem(k, String(v)); } catch(e){} return Promise.resolve({ key: k, value: v, shared: false }); },
-  delete: (k) => { try { localStorage.removeItem(k); } catch(e){} return Promise.resolve({ key: k, deleted: true, shared: false }); },
-  list: (p) => { let keys = []; try { keys = Object.keys(localStorage).filter(k => !p || k.startsWith(p)); } catch(e){} return Promise.resolve({ keys, prefix: p, shared: false }); }
-};
-</script>
-<link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#0F1318">
-<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
-<link rel="apple-touch-icon" href="/icon-192.png">
-</head>
-<body>
-<div id="root"><div id="boot">読み込み中…（初回はライブラリ取得のため数秒かかります）</div></div>
-<script type="text/babel" data-type="module" data-presets="react">
 
 
 import React, { useState, useEffect, useMemo, useRef } from "https://esm.sh/react@18.2.0";
@@ -3431,7 +3393,3 @@ const S = {
 createRoot(document.getElementById("root")).render(React.createElement(App));
 
 
-
-</script>
-</body>
-</html>
