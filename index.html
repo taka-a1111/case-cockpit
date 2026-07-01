@@ -1193,11 +1193,9 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
       role="button" tabIndex={0}
       onPointerDown={cardDown} onPointerMove={cardMove} onPointerUp={cardUp} onPointerCancel={cardUp}
       onClick={() => onOpen(p)}>
-      {(replyN > 0 || statusTint) && (
+      {replyN > 0 && (
         <div style={S.cardHead}>
-          {replyN > 0 && <span style={S.cardReplyPill}><Reply size={12} strokeWidth={2.4} />要返信{replyN}</span>}
-          {p.status === "相手待ち" && <span style={S.statusPillWait}>相手待ち</span>}
-          {p.status === "支払い待ち" && <span style={S.statusPillPay}>支払い待ち</span>}
+          <span style={S.cardReplyPill}><Reply size={12} strokeWidth={2.4} />要返信{replyN}</span>
         </div>
       )}
 
