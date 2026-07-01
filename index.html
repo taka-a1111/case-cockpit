@@ -56,7 +56,7 @@ import {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-01d"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-01e"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -131,6 +131,13 @@ const TASK_LANES = [
   { key: "later",   label: "明日以降",   color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
   { key: "waiting", label: "相手待ち",   color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
   { key: "payment", label: "支払い待ち", color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
+];
+
+// 案件一覧（フォーカス画面）のステータスタブ。スマホは横スワイプで切替、PCは3列カンバン。
+const FOCUS_STATUSES = [
+  { key: "進行中",     label: "進行中",     color: "#9AA4B2" },
+  { key: "相手待ち",   label: "相手待ち",   color: "#D9A23B" },
+  { key: "支払い待ち", label: "支払い待ち", color: "#51CF66" },
 ];
 
 const INBOX_ID = "__inbox__";
@@ -343,6 +350,7 @@ export default function App() {
   const [view, setView] = useState("focus");
   const [navStack, setNavStack] = useState([]); // 画面遷移の履歴（戻る用）
   const [activeLane, setActiveLane] = useState("today"); // タスク画面のレーン（上部スワイプで切替）
+  const [activeFocusStatus, setActiveFocusStatus] = useState("進行中"); // 案件一覧のステータスタブ（スマホのみ）
   const wide = useWideScreen(); // PCではタスク画面を横幅いっぱいに広げる
   const VIEWS = ["focus", "tasks", "calendar"];
   useEffect(() => { try { window.scrollTo(0, 0); const m = document.querySelector("main"); if (m) m.scrollTop = 0; } catch {} }, [view]);
@@ -363,6 +371,10 @@ export default function App() {
         const idx = TASK_LANES.findIndex((L) => L.key === activeLane);
         if (dx < 0 && idx < TASK_LANES.length - 1) setActiveLane(TASK_LANES[idx + 1].key);
         else if (dx > 0 && idx > 0) setActiveLane(TASK_LANES[idx - 1].key);
+      } else if (view === "focus" && topZone && !wide) {
+        const idx = FOCUS_STATUSES.findIndex((L) => L.key === activeFocusStatus);
+        if (dx < 0 && idx < FOCUS_STATUSES.length - 1) setActiveFocusStatus(FOCUS_STATUSES[idx + 1].key);
+        else if (dx > 0 && idx > 0) setActiveFocusStatus(FOCUS_STATUSES[idx - 1].key);
       } else {
         const i = VIEWS.indexOf(view);
         if (dx < 0 && i < VIEWS.length - 1) go(VIEWS[i + 1]);
@@ -848,7 +860,7 @@ export default function App() {
 
       {/* ===== Body ===== */}
       <main style={{ ...S.main, ...(wide && (view === "tasks" || view === "focus") ? S.mainWide : {}) }} onTouchStart={onMainTouchStart} onTouchEnd={onMainTouchEnd}>
-        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} />}
+        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} activeFocusStatus={activeFocusStatus} setActiveFocusStatus={setActiveFocusStatus} />}
         {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} activeLane={activeLane} setActiveLane={setActiveLane} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={setEditing} />}
       </main>
@@ -900,7 +912,7 @@ export default function App() {
 /* ============================================================
    フォーカス（ダッシュボード）
    ============================================================ */
-function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject }) {
+function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, activeFocusStatus, setActiveFocusStatus }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
   const [sortMode, setSortMode] = useState("manual");
@@ -1123,7 +1135,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
         {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
         {wide ? (
           <div style={S.focusKanban}>
-            {[["進行中", "#9AA4B2"], ["相手待ち", "#D9A23B"], ["支払い待ち", "#51CF66"]].map(([status, color]) => {
+            {FOCUS_STATUSES.map(({ key: status, color }) => {
               const items = cardList.filter((p) => p.status === status);
               return (
                 <div key={status} style={S.focusKanCol}>
@@ -1142,9 +1154,34 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
             })}
           </div>
         ) : (
-          <div style={S.grid}>
-            {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
-          </div>
+          <>
+            <div style={S.taskTabs}>
+              {FOCUS_STATUSES.map((L) => {
+                const active = activeFocusStatus === L.key;
+                const count = cardList.filter((p) => p.status === L.key).length;
+                return (
+                  <button key={L.key}
+                    style={{ ...S.taskTab, ...(active ? S.taskTabOn : {}) }}
+                    onClick={() => setActiveFocusStatus(L.key)}>
+                    <span style={{ ...S.laneDot, background: L.color }} />
+                    <span>{L.label}</span>
+                    <span style={{ ...S.taskTabCount, ...(active ? S.taskTabCountOn : {}) }}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={S.swipeArea} data-focus-status={activeFocusStatus}>
+              {(() => {
+                const items = cardList.filter((p) => p.status === activeFocusStatus);
+                if (items.length === 0) return <Empty text="このステータスの案件はありません。" />;
+                return (
+                  <div style={S.grid}>
+                    {items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+                  </div>
+                );
+              })()}
+            </div>
+          </>
         )}
       </section>
     </div>
