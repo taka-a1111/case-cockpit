@@ -56,7 +56,7 @@ import {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-01i"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-01k"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -415,13 +415,18 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   // PWA「共有」から起動されたら、クエリを読んで案件選択ピッカーを出す（URLはすぐ綺麗にする）
+  // また ?tab=focus/tasks/calendar で起動画面を切り替える（デスクトップPWAのショートカット用）
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
       const t = sp.get("text") || sp.get("title") || "";
       const u = sp.get("url") || "";
+      const tab = sp.get("tab");
+      if (tab === "focus" || tab === "tasks" || tab === "calendar") setView(tab);
       if (t || u) {
         setShareIntent({ text: t, url: u });
+      }
+      if (t || u || tab) {
         const clean = window.location.origin + window.location.pathname;
         window.history.replaceState({}, "", clean);
       }
@@ -1332,44 +1337,36 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
       role="button" tabIndex={0}
       onPointerDown={cardDown} onPointerMove={cardMove} onPointerUp={cardUp} onPointerCancel={cardUp}
       onClick={() => onOpen(p)}>
-      {replyN > 0 && (
-        <div style={S.cardHead}>
-          <span style={S.cardReplyPill}><Reply size={12} strokeWidth={2.4} />要返信{replyN}</span>
-        </div>
-      )}
-
-      <div style={S.cardCompanyRow}>
+      <div style={S.cardMainRow}>
         <button style={S.cardCheck} onPointerDown={stop}
           onClick={(e) => { stop(e); onToggleProject && onToggleProject(p.id); }} title="案件を完了">
-          <Circle size={20} color={C.ink3} strokeWidth={2} />
+          <Circle size={18} color={C.ink3} strokeWidth={2} />
         </button>
-        <span style={S.cardCompany}>{p.company}</span>
-        {draggable && (
-          <span style={S.cardGrip} title="ドラッグして並び替え"
-            onPointerDown={(e) => { e.stopPropagation(); if (onDragHandle) onDragHandle(p.id, e.currentTarget, e.pointerId); }}
-            onClick={(e) => e.stopPropagation()}>
-            <GripVertical size={19} color={C.ink3} strokeWidth={2} />
+        <span style={S.cardCompanyWrap}>
+          <MarqueeText text={p.company || "（無題）"} style={S.cardCompany} />
+        </span>
+        {replyN > 0 && (
+          <span style={S.cardReplyPill} title="要返信あり">
+            <Reply size={11} strokeWidth={2.4} />{replyN}
           </span>
         )}
+        {(dl || st) && (() => {
+          const d = dl || st;
+          const isDl = !!dl;
+          return (
+            <span style={{ ...S.cardDateInline, ...(d.overdue ? S.cardDeadlineOver : {}) }}
+              onPointerDown={stop}
+              onClick={isDl ? openPicker : undefined}>
+              {isDl && <input type="date" value={p.deadline || ""} style={S.cardDateHidden}
+                onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />}
+              {d.text}
+            </span>
+          );
+        })()}
+        {Number(p.reward) > 0 && (
+          <span style={S.cardRewardInline}>{yenMan(p.reward)}</span>
+        )}
       </div>
-
-      {(dl || st || Number(p.reward) > 0) && (
-        <div style={S.cardMetaLine}>
-          {st && (
-            <span style={{ ...S.cardDeadlineSub, cursor: "default", ...(st.overdue ? S.cardDeadlineOver : {}) }} onPointerDown={stop}>
-              <Clock size={13} strokeWidth={2} style={{ verticalAlign: "-2px", marginRight: 3 }} />{st.text}
-            </span>
-          )}
-          {dl && (
-            <span style={{ ...S.cardDeadlineSub, ...(dl.overdue ? S.cardDeadlineOver : {}) }} onPointerDown={stop} onClick={openPicker}>
-              納期 {dl.text}
-              <input type="date" value={p.deadline || ""} style={S.cardDateHidden}
-                onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />
-            </span>
-          )}
-          <span style={S.cardReward}>{yenMan(p.reward)}</span>
-        </div>
-      )}
 
       {showTasks.length > 0 && (
         <div style={S.cardTaskList}>
@@ -2936,6 +2933,44 @@ function LinkEditModal({ initial, onSave, onDelete, onClose }) {
   );
 }
 
+// 内容がコンテナ幅を超えたら自動でループ横スクロール表示するテキスト。
+// はみ出さない場合は普通の1行表示。
+function MarqueeText({ text, style, gap = 40, seconds = 10 }) {
+  const wrapRef = useRef(null);
+  const measureRef = useRef(null);
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const check = () => {
+      const w = wrapRef.current, m = measureRef.current;
+      if (!w || !m) return;
+      setOverflow(m.scrollWidth > w.clientWidth + 1);
+    };
+    check();
+    let ro;
+    try {
+      ro = new ResizeObserver(check);
+      if (wrapRef.current) ro.observe(wrapRef.current);
+      if (measureRef.current) ro.observe(measureRef.current);
+    } catch {}
+    return () => { try { ro && ro.disconnect(); } catch {} };
+  }, [text]);
+  if (!overflow) {
+    return (
+      <span ref={wrapRef} style={{ ...style, display: "block", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+        <span ref={measureRef} style={{ display: "inline-block" }}>{text}</span>
+      </span>
+    );
+  }
+  return (
+    <span ref={wrapRef} style={{ ...style, display: "block", overflow: "hidden", whiteSpace: "nowrap", position: "relative" }}>
+      <span style={{ display: "inline-block", animation: `helm-marquee ${seconds}s linear infinite`, willChange: "transform" }}>
+        <span ref={measureRef} style={{ display: "inline-block", paddingRight: gap }}>{text}</span>
+        <span aria-hidden="true" style={{ display: "inline-block", paddingRight: gap }}>{text}</span>
+      </span>
+    </span>
+  );
+}
+
 // 案件詳細のリンク編集フィールド（Claude / GitHub / 公開URL などをワンタップ追加）
 function LinksField({ links, onChange }) {
   const list = Array.isArray(links) ? links : [];
@@ -3020,6 +3055,7 @@ function Fonts() {
     ::-webkit-scrollbar { width: 9px; height: 9px; }
     ::-webkit-scrollbar-thumb { background: #333B46; border-radius: 6px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes helm-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
   `}</style>);
 }
 
@@ -3203,23 +3239,28 @@ const S = {
   focusKanEmpty: { color: C.ink3, fontSize: 13, padding: "6px 2px" },
   card: {
     position: "relative", textAlign: "left", overflow: "hidden",
-    display: "flex", flexDirection: "column", gap: 0, padding: "16px 18px",
-    background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, cursor: "pointer",
+    display: "flex", flexDirection: "column", gap: 0, padding: "12px 14px",
+    background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, cursor: "pointer",
   },
   cardBar: { display: "none" },
   cardInner: { flex: 1, display: "flex", flexDirection: "column" },
-  cardHead: { display: "flex", alignItems: "center", gap: 8, marginBottom: 9, minHeight: 20, justifyContent: "flex-end" },
-  cardGrip: { flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "6px 2px", marginLeft: 4, touchAction: "none", cursor: "grab", color: C.ink3 },
+  cardHead: { display: "none" },
+  cardGrip: { display: "none" },
+  cardMainRow: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 },
+  cardCompanyWrap: { flex: 1, minWidth: 0, overflow: "hidden" },
+  cardDateInline: { position: "relative", flexShrink: 0, fontSize: 13.5, color: C.ink2, fontWeight: 600, cursor: "pointer" },
+  cardRewardInline: { flexShrink: 0, fontFamily: F.disp, fontWeight: 800, fontSize: 15, fontVariantNumeric: "tabular-nums", letterSpacing: 0.3, color: C.ink2 },
   cardDragging: { opacity: 0.85, boxShadow: `0 0 0 2px ${C.accent}, 0 10px 24px rgba(0,0,0,0.45)`, cursor: "grabbing" },
   cardDragOther: { transition: "transform 0.12s ease" },
   cardStatus: { display: "none" },
-  cardReplyPill: { display: "inline-flex", alignItems: "center", gap: 3, fontSize: 13.5, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.15)", padding: "3px 9px", borderRadius: 7 },
+  cardReplyPill: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 3, fontSize: 12, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.15)", padding: "2px 7px", borderRadius: 6 },
   statusPillWait: { display: "inline-flex", alignItems: "center", fontSize: 13, fontWeight: 700, color: "#D9A23B", background: "rgba(217,162,59,0.15)", padding: "3px 10px", borderRadius: 7 },
   statusPillPay: { display: "inline-flex", alignItems: "center", fontSize: 13, fontWeight: 700, color: "#51CF66", background: "rgba(81,207,102,0.15)", padding: "3px 10px", borderRadius: 7 },
   statusDot: { display: "none" },
-  cardCompanyRow: { display: "flex", alignItems: "center", gap: 12, marginBottom: 8 },
+  cardCompanyRow: { display: "none" },
   cardCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
-  cardCompany: { flex: 1, minWidth: 0, fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, lineHeight: 1.3 },
+
+  cardCompany: { fontFamily: F.disp, fontWeight: 800, fontSize: 17, letterSpacing: 0.2, lineHeight: 1.3, color: C.ink },
   cardWork: { display: "none" },
   cardMetaLine: { display: "flex", alignItems: "baseline", gap: 10 },
   cardDeadlineSub: { position: "relative", fontSize: 14.5, color: C.ink2, fontWeight: 600, cursor: "pointer" },
@@ -3250,7 +3291,7 @@ const S = {
   cardReward: { fontFamily: F.disp, fontWeight: 800, fontSize: 16, fontVariantNumeric: "tabular-nums", letterSpacing: 0.3, color: C.ink2, marginLeft: "auto" },
   cardDue: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
   cardDueNone: { display: "none" },
-  cardTaskList: { display: "flex", flexDirection: "column", gap: 13, marginTop: 14, paddingTop: 14, paddingLeft: 32, borderTop: `1px solid ${C.line}` },
+  cardTaskList: { display: "flex", flexDirection: "column", gap: 9, marginTop: 10, paddingTop: 9, paddingLeft: 30, borderTop: `1px solid ${C.line}` },
   cardTaskRow: { display: "flex", alignItems: "center", gap: 12, cursor: "pointer" },
   cardTaskCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
   cardTaskEdit: { display: "flex", flexDirection: "column", gap: 8, padding: "10px 11px", background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 10 },
