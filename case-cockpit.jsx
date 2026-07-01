@@ -8,6 +8,18 @@ import {
   CalendarDays, Coins, ExternalLink, GripVertical, Settings, ChevronLeft, ChevronRight, ListPlus, Download, Upload,
   AlignLeft, CornerDownRight, Link2, ArrowUpDown, Combine, Repeat, Pencil
 } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// ==================== Supabase 同期設定 ====================
+// 個人利用の Supabase プロジェクト。Publishable key はクライアントに公開して問題無い設計。
+// テーブル: helm_state (id text PK, projects jsonb, rev bigint, updated_at timestamptz)
+const SUPABASE_URL = "https://fgbqheodukryhcmrjucn.supabase.co";
+const SUPABASE_KEY = "sb_publishable_gGLBPr0f3AqjdvNlgJk5dA_pBQjWfHP";
+const SUPABASE_ROW_ID = "default";
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  realtime: { params: { eventsPerSecond: 10 } },
+});
 
 /* ============================================================
    案件コックピット — フリーランス案件管理ダッシュボード
@@ -17,63 +29,38 @@ import {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
+const BUILD_TAG = "2026-07-02a-supabase"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
 // GAS側は doGet(?token=) でデータを返し、doPost({token,data}) で保存する想定。
 // CORSプリフライトを避けるため POST は text/plain で送る。
-async function gasGet({ url, token }) {
-  const u = url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) + "&_=" + Date.now();
-  let res;
-  try { res = await fetch(u, { method: "GET", redirect: "follow" }); }
-  catch (e) { throw new Error("接続できません。URLが正しいか、デプロイのアクセス権が『全員』か確認してください"); }
-  const txt = await res.text();
-  if (txt.trim().startsWith("<")) throw new Error("認証ページが返りました。デプロイのアクセス権を『全員』にし、URLが /exec で終わっているか確認してください");
-  let j; try { j = JSON.parse(txt); } catch { throw new Error("応答を解析できません。URL末尾が /exec か確認してください"); }
-  if (j && j.ok === false) throw new Error(j.error || "認証エラー（同期キーを確認してください）");
-  // 新形式 {ok,rev,data} / 旧形式 [] の両対応
-  if (Array.isArray(j)) return { rev: 0, data: j };
-  const data = Array.isArray(j.data) ? j.data : (j && j.data ? j.data : null);
-  return { rev: Number(j.rev) || 0, data };
+// ==================== Supabase 同期ヘルパー ====================
+// helm_state から現在のデータを取得
+async function sbFetch() {
+  const { data, error } = await supabase.from("helm_state")
+    .select("projects, rev").eq("id", SUPABASE_ROW_ID).single();
+  if (error) throw new Error(error.message || "取得に失敗しました");
+  const rev = Number(data && data.rev) || 0;
+  const projects = Array.isArray(data && data.projects) ? data.projects : [];
+  return { rev, data: projects };
 }
-// 保存はデータを分割してGETで送る（URLが長くなりすぎるのを防ぐ）。
-// エンコード後の長さで詰めるので、英数中心なら1〜数回で済み高速。
-function chunkForUrl(json, maxEnc) {
-  const chunks = [];
-  let i = 0;
-  while (i < json.length) {
-    let take = Math.min(json.length - i, maxEnc);
-    while (take > 1 && encodeURIComponent(json.slice(i, i + take)).length > maxEnc) {
-      take = Math.floor(take * 0.7) || 1;
-    }
-    chunks.push(json.slice(i, i + take));
-    i += take;
+
+// helm_state を楽観ロック付きで更新。base(=期待するrev)が現在rev と一致しなければ conflict。
+async function sbSave(projects, base) {
+  const nextRev = (base || 0) + 1;
+  const { data, error } = await supabase.from("helm_state")
+    .update({ projects, rev: nextRev, updated_at: new Date().toISOString() })
+    .eq("id", SUPABASE_ROW_ID)
+    .eq("rev", base || 0)
+    .select("rev").maybeSingle();
+  if (error) throw new Error(error.message || "保存に失敗しました");
+  if (!data) {
+    // 0 rows updated → 別端末が先に更新済み。最新を返して呼び出し側で adopt。
+    const fresh = await sbFetch();
+    return { conflict: true, rev: fresh.rev, data: fresh.data };
   }
-  return chunks.length ? chunks : [""];
-}
-async function gasPost({ url, token }, data, base) {
-  const json = JSON.stringify(data);
-  const parts = chunkForUrl(json, 6000); // エンコード後 約6000文字/回まで
-  const total = parts.length;
-  let last = null;
-  for (let i = 0; i < total; i++) {
-    const u = url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) +
-      "&action=save&seq=" + i + "&total=" + total + "&base=" + (base || 0) +
-      "&chunk=" + encodeURIComponent(parts[i]) + "&_=" + Date.now();
-    let res;
-    try { res = await fetch(u, { method: "GET", redirect: "follow" }); }
-    catch (e) { throw new Error("接続できません。URLが正しいか、デプロイのアクセス権が『全員』か確認してください"); }
-    const txt = await res.text();
-    if (txt.trim().startsWith("<")) throw new Error("認証ページが返りました。デプロイのアクセス権を『全員』にし、URLが /exec で終わっているか確認してください");
-    try { last = JSON.parse(txt); } catch { throw new Error("応答を解析できません。GASを最新コードで再デプロイしたか確認してください"); }
-    if (last && last.ok === false) throw new Error(last.error || "認証エラー（同期キーを確認してください）");
-    if (last && last.conflict) break; // 別端末が先に更新済み → 中断して取り込み
-  }
-  if (last && last.conflict) {
-    const cdata = Array.isArray(last.data) ? last.data : (last.data || null);
-    return { conflict: true, rev: Number(last.rev) || 0, data: cdata };
-  }
-  return { conflict: false, rev: (last && last.rev != null) ? Number(last.rev) : (base || 0) };
+  return { conflict: false, rev: Number(data.rev) || nextRev };
 }
 
 const PLATFORMS = {
@@ -91,6 +78,13 @@ const TASK_LANES = [
   { key: "later",   label: "明日以降",   color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
   { key: "waiting", label: "相手待ち",   color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
   { key: "payment", label: "支払い待ち", color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
+];
+
+// 案件一覧（フォーカス画面）のステータスタブ。スマホは横スワイプで切替、PCは3列カンバン。
+const FOCUS_STATUSES = [
+  { key: "進行中",     label: "進行中",     color: "#9AA4B2" },
+  { key: "相手待ち",   label: "相手待ち",   color: "#D9A23B" },
+  { key: "支払い待ち", label: "支払い待ち", color: "#51CF66" },
 ];
 
 const INBOX_ID = "__inbox__";
@@ -145,8 +139,8 @@ const nextMonthly = (day, fromStr) => {
   return fmtYMD(occ);
 };
 // 返信タスク（当日期限）。msg はクライアントから届いた原文をそのまま保持
-const reply = (title, msg = "") => ({ id: uid(), title, done: false, due: dStr(0), lane: "today", kind: "reply", msg, note: "", repeat: null });
-const task = (title, offset, lane = "today", done = false) => ({ id: uid(), title, done, due: offset == null ? "" : dStr(offset), start: "", lane, kind: "task", note: "", repeat: null });
+const reply = (title, msg = "") => ({ id: uid(), title, done: false, due: dStr(0), lane: "today", kind: "reply", msg, note: "", repeat: null, links: [] });
+const task = (title, offset, lane = "today", done = false) => ({ id: uid(), title, done, due: offset == null ? "" : dStr(offset), start: "", lane, kind: "task", note: "", repeat: null, links: [] });
 
 function makeSample() {
   // 本番初期データ。Gmail（クラウドワークス通知）から確認できた進行中案件のみ骨組みで登録。
@@ -234,7 +228,7 @@ function normalizeProjects(arr) {
     start: p.start ?? "",
     received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
     links: (Array.isArray(p.links) ? p.links : []).filter((l) => l && (l.url || l.label)).map((l) => ({ id: l.id || uid(), label: l.label ?? "", url: l.url ?? "" })),
-    tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "", note: t.note ?? "", repeat: t.repeat ?? null })),
+    tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "", note: t.note ?? "", repeat: t.repeat ?? null, links: (Array.isArray(t.links) ? t.links : []).filter((l) => l && (l.url || l.label)).map((l) => ({ id: l.id || uid(), label: l.label ?? "", url: l.url ?? "" })) })),
   }));
   if (!list.some((p) => p.id === INBOX_ID)) list = [...list, makeInbox()];
   return list;
@@ -303,6 +297,7 @@ export default function App() {
   const [view, setView] = useState("focus");
   const [navStack, setNavStack] = useState([]); // 画面遷移の履歴（戻る用）
   const [activeLane, setActiveLane] = useState("today"); // タスク画面のレーン（上部スワイプで切替）
+  const [activeFocusStatus, setActiveFocusStatus] = useState("進行中"); // 案件一覧のステータスタブ（スマホのみ）
   const wide = useWideScreen(); // PCではタスク画面を横幅いっぱいに広げる
   const VIEWS = ["focus", "tasks", "calendar"];
   useEffect(() => { try { window.scrollTo(0, 0); const m = document.querySelector("main"); if (m) m.scrollTop = 0; } catch {} }, [view]);
@@ -313,21 +308,20 @@ export default function App() {
   const onMainTouchStart = (e) => { const t = e.touches[0]; navSwipe.current = { x: t.clientX, y: t.clientY }; };
   const onMainTouchEnd = (e) => {
     const t = e.changedTouches && e.changedTouches[0]; if (!t) return;
-    const sx = navSwipe.current.x, sy = navSwipe.current.y;
+    const sx = navSwipe.current.x;
     if (sx <= EDGE || sx >= winW() - EDGE) return; // 端から始まったスワイプは「戻る」に任せる
     const dx = t.clientX - navSwipe.current.x, dy = t.clientY - navSwipe.current.y;
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      const H = (typeof window !== "undefined" ? window.innerHeight : 800);
-      const topZone = sy < H * 0.45; // 画面上部＝レーン切替、下部＝ビュー切替
-      if (view === "tasks" && topZone) {
+      if (view === "tasks") {
         const idx = TASK_LANES.findIndex((L) => L.key === activeLane);
         if (dx < 0 && idx < TASK_LANES.length - 1) setActiveLane(TASK_LANES[idx + 1].key);
         else if (dx > 0 && idx > 0) setActiveLane(TASK_LANES[idx - 1].key);
-      } else {
-        const i = VIEWS.indexOf(view);
-        if (dx < 0 && i < VIEWS.length - 1) go(VIEWS[i + 1]);
-        else if (dx > 0 && i > 0) go(VIEWS[i - 1]);
+      } else if (view === "focus" && !wide) {
+        const idx = FOCUS_STATUSES.findIndex((L) => L.key === activeFocusStatus);
+        if (dx < 0 && idx < FOCUS_STATUSES.length - 1) setActiveFocusStatus(FOCUS_STATUSES[idx + 1].key);
+        else if (dx > 0 && idx > 0) setActiveFocusStatus(FOCUS_STATUSES[idx - 1].key);
       }
+      // カレンダー画面は月移動を calGrid 側で拾う（e.stopPropagation で main まで届かない）
     }
   };
   const [editing, setEditing] = useState(null); // draft object or null
@@ -368,13 +362,18 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
   // PWA「共有」から起動されたら、クエリを読んで案件選択ピッカーを出す（URLはすぐ綺麗にする）
+  // また ?tab=focus/tasks/calendar で起動画面を切り替える（デスクトップPWAのショートカット用）
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
       const t = sp.get("text") || sp.get("title") || "";
       const u = sp.get("url") || "";
+      const tab = sp.get("tab");
+      if (tab === "focus" || tab === "tasks" || tab === "calendar") setView(tab);
       if (t || u) {
         setShareIntent({ text: t, url: u });
+      }
+      if (t || u || tab) {
         const clean = window.location.origin + window.location.pathname;
         window.history.replaceState({}, "", clean);
       }
@@ -395,9 +394,10 @@ export default function App() {
   const goBack = () => { if (trap.current > 0) { try { window.history.back(); } catch { closeOneRef.current(); } } else { closeOneRef.current(); } };
 
   /* ---- 同期設定・状態 ---- */
-  const [sync, setSync] = useState({ url: "", token: "", on: false });
+  const [sync, setSync] = useState({ on: true });
   const [syncState, setSyncState] = useState({ status: "idle", at: null, msg: "" });
   const pushTimer = useRef(null);
+  const pushMaxWaitTimer = useRef(null); // 連続入力中でも定期的に push を走らせる最大待機タイマー
   const revRef = useRef(0);        // 直近にサーバと一致したリビジョン（楽観ロックの基準）
   const dirtyRef = useRef(false);  // ローカルに未送信の変更があるか
   const syncRef = useRef(sync);    // イベント内で最新の同期設定を参照
@@ -420,23 +420,26 @@ export default function App() {
     saveMeta();
   };
 
-  // 実際のクラウド保存。常に最新(projectsRef.current)を送る。失敗してもdirtyを残して
-  // 自動で再送するため、push失敗で同期が止まる（=以前のデッドロック）を起こさない。
+  const lastPushedJsonRef = useRef(""); // 直近pushしたJSONの完全一致比較用（無駄通信の抑止）
+  // Supabase保存。楽観ロック（rev）で他端末との整合性を担保。
   const runPush = async (cfg) => {
     const s = cfg || syncRef.current;
-    if (!s.on || !s.url || !s.token) return;
-    if (pushingRef.current) return;          // 実行中なら待つ（終了時に未送信分を再キック）
+    if (!s.on) return;
+    if (pushingRef.current) return;
+    const nowJson = JSON.stringify(projectsRef.current);
+    if (nowJson === lastPushedJsonRef.current) { dirtyRef.current = false; return; }
     pushingRef.current = true;
     setSyncState((v) => ({ ...v, status: "syncing" }));
     let failed = false;
     try {
-      const res = await gasPost(s, projectsRef.current, revRef.current);
+      const res = await sbSave(projectsRef.current, revRef.current);
       if (res.conflict && res.data) {
-        await adopt(res.data, res.rev);       // 別端末が先に更新→取り込む（adopt内でdirty=false）
+        await adopt(res.data, res.rev);
+        lastPushedJsonRef.current = "";
         setSyncState({ status: "ok", at: Date.now(), msg: "別の端末の変更を反映しました" });
       } else {
         revRef.current = res.rev; dirtyRef.current = false; saveMeta();
-        pullSuppressRef.current = Date.now() + 4000; // 保存直後の往復取得を抑制（自分の保存の巻き戻り防止）
+        lastPushedJsonRef.current = nowJson;
         setSyncState({ status: "ok", at: Date.now(), msg: "" });
       }
     } catch (e) {
@@ -444,46 +447,50 @@ export default function App() {
       setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) });
     } finally {
       pushingRef.current = false;
-      // 未送信が残っていれば再キック。失敗時は少し待ってリトライ（恒久デッドロック防止）。
       if (dirtyRef.current) {
         if (pushTimer.current) clearTimeout(pushTimer.current);
-        pushTimer.current = setTimeout(() => runPush(), failed ? 2500 : 400);
+        pushTimer.current = setTimeout(() => runPush(), failed ? 2500 : 200);
       }
     }
   };
 
-  // 変更を検知したら600msデバウンスで保存をキック（連打をまとめる）
+  // 変更を検知したらデバウンスで保存をキック
   const schedulePush = (cfg) => {
     const s = cfg || syncRef.current;
-    if (!s.on || !s.url || !s.token) return;
-    lastEditRef.current = Date.now(); // 直近の編集時刻を記録（pullの上書き防止に使う）
+    if (!s.on) return;
+    lastEditRef.current = Date.now();
     dirtyRef.current = true;
     if (pushTimer.current) clearTimeout(pushTimer.current);
-    pushTimer.current = setTimeout(() => runPush(s), 300);
+    pushTimer.current = setTimeout(() => runPush(s), 100);
+    if (!pushMaxWaitTimer.current) {
+      pushMaxWaitTimer.current = setTimeout(() => {
+        pushMaxWaitTimer.current = null;
+        if (dirtyRef.current) runPush(s);
+      }, 600);
+    }
   };
 
-  // クラウドから取得し、サーバが新しければ取り込む（他端末の変更を反映）
+  // Supabase から現在値を取得し、サーバが新しければ取り込む（手動リトライ・フォールバック用）
   const cloudPull = async (cfg, opts) => {
     const s = cfg || syncRef.current;
     const force = opts && opts.force;
-    if (!s.on || !s.url || !s.token) return;
+    if (!s.on) return;
     if (pullingRef.current) return;
-    if (pushingRef.current) return;                          // 保存実行中は取得しない
-    if (!force && Date.now() - lastEditRef.current < 15000) return; // 直近15秒の編集はローカルを正とし、取り込まない
-    if (!force && Date.now() < pullSuppressRef.current) return; // 保存直後は往復取得を抑制
-    if (dirtyRef.current && !force) return; // 未送信のローカル変更がある間は上書きしない
+    if (pushingRef.current) return;
+    if (!force && Date.now() - lastEditRef.current < 3000) return;
+    if (dirtyRef.current && !force) return;
     pullingRef.current = true;
     try {
-      const remote = await gasGet(s);
+      const remote = await sbFetch();
       if (remote && remote.data && !dirtyRef.current) {
         const remoteReal = remote.data.some((p) => p && p.id !== INBOX_ID);
         const remoteCount = remote.data.filter((p) => p && p.id !== INBOX_ID).length;
         const localCount = projectsRef.current.filter((p) => p && p.id !== INBOX_ID).length;
-        const shrunk = !force && remoteCount + 1 < localCount; // サーバが2件以上少ない＝古い/壊れの疑い（巻き戻り防止）
+        const shrunk = !force && remoteCount + 1 < localCount;
         if (remote.rev > revRef.current && remoteReal && !shrunk) {
-          await adopt(remote.data, remote.rev); // サーバのrevが進んだ＝他端末が更新→取り込む
+          await adopt(remote.data, remote.rev);
         } else if (remote.rev !== revRef.current && !shrunk) {
-          revRef.current = remote.rev; saveMeta(); // revのみ同期（自分の保存が往復で変質しても取り込まない）
+          revRef.current = remote.rev; saveMeta();
         }
       }
     } catch (e) {
@@ -504,9 +511,9 @@ export default function App() {
   /* ---- load ---- */
   useEffect(() => {
     (async () => {
-      // 同期設定・リビジョンを読む
-      let cfg = { url: "", token: "", on: false };
-      try { const sr = await window.storage.get(SYNC_KEY); if (sr && sr.value) cfg = { ...cfg, ...JSON.parse(sr.value) }; } catch {}
+      // 同期設定を読む（保存された on/off のみ。デフォルトは on）
+      let cfg = { on: true };
+      try { const sr = await window.storage.get(SYNC_KEY); if (sr && sr.value) { const j = JSON.parse(sr.value); if (typeof j.on === "boolean") cfg.on = j.on; } } catch {}
       setSync(cfg); syncRef.current = cfg;
       try { const mr = await window.storage.get(META_KEY); if (mr && mr.value) { const m = JSON.parse(mr.value); revRef.current = Number(m.rev) || 0; } } catch {}
 
@@ -521,22 +528,22 @@ export default function App() {
       setProjects(localNorm); projectsRef.current = localNorm;
       setLoading(false);
 
-      // 同期が有効なら、サーバと突き合わせる
-      if (cfg.on && cfg.url && cfg.token) {
+      // Supabase と突き合わせる
+      if (cfg.on) {
         setSyncState({ status: "syncing", at: null, msg: "" });
         try {
-          const remote = await gasGet(cfg);
+          const remote = await sbFetch();
           const remoteReal = !!(remote && remote.data && remote.data.some((p) => p && p.id !== INBOX_ID));
           if (remote && remote.data) {
             if (remote.rev > revRef.current && remoteReal) {
-              await adopt(remote.data, remote.rev); // サーバが新しい→取り込む
+              await adopt(remote.data, remote.rev);
             } else if (!remoteReal) {
-              schedulePush(cfg); // サーバが空→ローカルを初期データとして送る
+              schedulePush(cfg); // サーバ空→ローカルを初期データとして送る
             } else {
               revRef.current = remote.rev; saveMeta();
             }
           } else {
-            schedulePush(cfg); // サーバが空→ローカルを初期データとして送る
+            schedulePush(cfg);
           }
           setSyncState({ status: "ok", at: Date.now(), msg: "" });
         } catch (e) {
@@ -546,14 +553,39 @@ export default function App() {
     })();
   }, []);
 
-  // 他端末の変更を反映：アプリ復帰時＋15秒ごと（編集後15秒・保存中・rev・破損の各ガードで巻き戻りは防止）
+  // Supabase realtime：他端末の更新を即座に反映（ポーリング不要）。
+  // 復帰時にも念のため cloudPull を1回走らせて、購読が切れていた期間の変更を拾う。
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === "visible") cloudPull(); };
     const onFocus = () => cloudPull();
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", onFocus);
-    const id = setInterval(() => { if (document.visibilityState === "visible") cloudPull(); }, 15000);
-    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onFocus); clearInterval(id); };
+    const channel = supabase.channel("helm_state_realtime")
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "helm_state", filter: `id=eq.${SUPABASE_ROW_ID}` },
+        (payload) => {
+          try {
+            const remoteRev = Number(payload && payload.new && payload.new.rev) || 0;
+            const remoteProjects = Array.isArray(payload && payload.new && payload.new.projects) ? payload.new.projects : null;
+            if (!remoteProjects) return;
+            // 自分の直近pushが往復してきた場合はスキップ
+            if (JSON.stringify(remoteProjects) === lastPushedJsonRef.current) {
+              revRef.current = remoteRev; saveMeta(); return;
+            }
+            // 直近3秒に自分が編集していれば見送り（次回pushで自分の変更が優先されるため）
+            if (Date.now() - lastEditRef.current < 3000) return;
+            if (dirtyRef.current) return;
+            if (remoteRev > revRef.current) adopt(remoteProjects, remoteRev);
+          } catch (e) {
+            setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) });
+          }
+        })
+      .subscribe();
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onFocus);
+      try { supabase.removeChannel(channel); } catch {}
+    };
   }, []);
 
   const persist = async (next) => {
@@ -589,10 +621,10 @@ export default function App() {
   // 手動: クラウドへ保存（競合時はサーバ版を取り込む）
   const syncPush = async () => {
     const s = syncRef.current;
-    if (!s.url || !s.token) return;
+    if (!s.on) return;
     setSyncState({ status: "syncing", at: null, msg: "" });
     try {
-      const res = await gasPost(s, projectsRef.current, revRef.current);
+      const res = await sbSave(projectsRef.current, revRef.current);
       if (res.conflict && res.data) { await adopt(res.data, res.rev); setSyncState({ status: "ok", at: Date.now(), msg: "別の端末の変更を反映しました" }); }
       else { revRef.current = res.rev; dirtyRef.current = false; saveMeta(); setSyncState({ status: "ok", at: Date.now(), msg: "保存しました" }); }
     } catch (e) { setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) }); }
@@ -600,38 +632,30 @@ export default function App() {
   // 手動: クラウドから取得（サーバを正として取り込む）
   const syncPull = async () => {
     const s = syncRef.current;
-    if (!s.url || !s.token) return;
+    if (!s.on) return;
     setSyncState({ status: "syncing", at: null, msg: "" });
     try {
-      const remote = await gasGet(s);
+      const remote = await sbFetch();
       if (remote && remote.data) await adopt(remote.data, remote.rev);
       setSyncState({ status: "ok", at: Date.now(), msg: "取得しました" });
     } catch (e) { setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) }); }
   };
-  // 接続診断：サーバの生レスポンスを調べ、新旧GAS・件数・同期設定を報告
+  // 接続診断：Supabase の疎通と件数を報告
   const syncDiagnose = async () => {
-    const s = syncRef.current;
-    if (!s.url || !s.token) return "URLまたは同期キーが未入力です。設定を保存してください。";
     try {
-      const u = s.url + (s.url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(s.token) + "&_=" + Date.now();
-      const res = await fetch(u, { method: "GET", redirect: "follow" });
-      const txt = await res.text();
-      if (txt.trim().startsWith("<")) return "❌ 認証ページが返りました。\nデプロイのアクセス権を『全員』に、URL末尾が /exec か確認してください。";
-      let j; try { j = JSON.parse(txt); } catch { return "❌ 応答を解析できません。\nURL末尾が /exec か確認してください。"; }
-      if (j && j.ok === false) return "❌ 認証エラー：" + (j.error || "同期キーが違います");
-      const hasRev = j && Object.prototype.hasOwnProperty.call(j, "rev");
-      const arr = Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : []);
-      const serverCount = arr.filter((p) => p && p.id !== INBOX_ID).length;
+      const remote = await sbFetch();
+      const serverCount = remote.data.filter((p) => p && p.id !== INBOX_ID).length;
       const localCount = projectsRef.current.filter((p) => p && p.id !== INBOX_ID).length;
+      const s = syncRef.current;
       const lines = [];
-      lines.push("✅ サーバに接続できました");
-      lines.push(hasRev ? `GAS：新バージョン（rev=${j.rev}）` : "⚠ GASが旧バージョンです。gas-sync.gs を全文置換し、デプロイを管理→新しいバージョンで再デプロイしてください。");
-      lines.push(`サーバの案件数：${serverCount}件`);
+      lines.push("✅ Supabaseに接続できました");
+      lines.push(`この端末のHelm版数：${BUILD_TAG}（PC・スマホで同じか確認）`);
+      lines.push(`サーバの案件数：${serverCount}件（サーバrev=${remote.rev}）`);
       lines.push(`この端末の案件数：${localCount}件（ローカルrev=${revRef.current}）`);
-      lines.push(`同期トグル：${s.on ? "有効" : "⚠ 無効（オンにして保存してください）"}`);
+      lines.push(`同期トグル：${s.on ? "有効" : "⚠ 無効（オンにしてください）"}`);
       return lines.join("\n");
     } catch (e) {
-      return "❌ 接続できません：" + String(e.message || e) + "\nURL・ネットワーク・アクセス権『全員』を確認してください。";
+      return "❌ 接続できません：" + String(e.message || e) + "\nネットワーク・Supabaseのステータスを確認してください。";
     }
   };
 
@@ -695,7 +719,7 @@ export default function App() {
     }));
   const addTaskToLane = (pid, lane, title) =>
     persist(projects.map((p) => p.id !== pid ? p : {
-      ...p, tasks: [...p.tasks, { id: uid(), title, done: false, due: "", start: "", lane, kind: "task", note: "", repeat: null }],
+      ...p, tasks: [...p.tasks, { id: uid(), title, done: false, due: "", start: "", lane, kind: "task", note: "", repeat: null, links: [] }],
     }));
   const setDeadline = (pid, deadline) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, deadline }));
@@ -807,7 +831,7 @@ export default function App() {
 
       {/* ===== Body ===== */}
       <main style={{ ...S.main, ...(wide && (view === "tasks" || view === "focus") ? S.mainWide : {}) }} onTouchStart={onMainTouchStart} onTouchEnd={onMainTouchEnd}>
-        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} />}
+        {view === "focus" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={setEditing} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} activeFocusStatus={activeFocusStatus} setActiveFocusStatus={setActiveFocusStatus} />}
         {view === "tasks" && <TasksView projects={projects} onToggle={toggleTask} onOpen={setEditing} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} activeLane={activeLane} setActiveLane={setActiveLane} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={setEditing} />}
       </main>
@@ -859,7 +883,7 @@ export default function App() {
 /* ============================================================
    フォーカス（ダッシュボード）
    ============================================================ */
-function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject }) {
+function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, activeFocusStatus, setActiveFocusStatus }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
   const [sortMode, setSortMode] = useState("manual");
@@ -1082,7 +1106,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
         {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
         {wide ? (
           <div style={S.focusKanban}>
-            {[["進行中", "#9AA4B2"], ["相手待ち", "#D9A23B"], ["支払い待ち", "#51CF66"]].map(([status, color]) => {
+            {FOCUS_STATUSES.map(({ key: status, color }) => {
               const items = cardList.filter((p) => p.status === status);
               return (
                 <div key={status} style={S.focusKanCol}>
@@ -1101,9 +1125,34 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
             })}
           </div>
         ) : (
-          <div style={S.grid}>
-            {cardList.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
-          </div>
+          <>
+            <div style={S.taskTabs}>
+              {FOCUS_STATUSES.map((L) => {
+                const active = activeFocusStatus === L.key;
+                const count = cardList.filter((p) => p.status === L.key).length;
+                return (
+                  <button key={L.key}
+                    style={{ ...S.taskTab, ...(active ? S.taskTabOn : {}) }}
+                    onClick={() => setActiveFocusStatus(L.key)}>
+                    <span style={{ ...S.laneDot, background: L.color }} />
+                    <span>{L.label}</span>
+                    <span style={{ ...S.taskTabCount, ...(active ? S.taskTabCountOn : {}) }}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={S.swipeArea} data-focus-status={activeFocusStatus}>
+              {(() => {
+                const items = cardList.filter((p) => p.status === activeFocusStatus);
+                if (items.length === 0) return <Empty text="このステータスの案件はありません。" />;
+                return (
+                  <div style={S.grid}>
+                    {items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+                  </div>
+                );
+              })()}
+            </div>
+          </>
         )}
       </section>
     </div>
@@ -1209,8 +1258,8 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
       if (an === null) return 1; if (bn === null) return -1;
       return an - bn;
     });
-  const showTasks = openTasks.slice(0, 4);
-  const moreTasks = openTasks.length - showTasks.length;
+  const showTasks = openTasks;
+  const moreTasks = 0;
   const stop = (e) => e.stopPropagation();
   const openPicker = (e) => { e.stopPropagation(); const inp = e.currentTarget.querySelector("input"); try { inp && inp.showPicker && inp.showPicker(); } catch {} };
   const draggable = !!onDragHandle;
@@ -1238,44 +1287,36 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
       role="button" tabIndex={0}
       onPointerDown={cardDown} onPointerMove={cardMove} onPointerUp={cardUp} onPointerCancel={cardUp}
       onClick={() => onOpen(p)}>
-      {replyN > 0 && (
-        <div style={S.cardHead}>
-          <span style={S.cardReplyPill}><Reply size={12} strokeWidth={2.4} />要返信{replyN}</span>
-        </div>
-      )}
-
-      <div style={S.cardCompanyRow}>
+      <div style={S.cardMainRow}>
         <button style={S.cardCheck} onPointerDown={stop}
           onClick={(e) => { stop(e); onToggleProject && onToggleProject(p.id); }} title="案件を完了">
-          <Circle size={20} color={C.ink3} strokeWidth={2} />
+          <Circle size={18} color={C.ink3} strokeWidth={2} />
         </button>
-        <span style={S.cardCompany}>{p.company}</span>
-        {draggable && (
-          <span style={S.cardGrip} title="ドラッグして並び替え"
-            onPointerDown={(e) => { e.stopPropagation(); if (onDragHandle) onDragHandle(p.id, e.currentTarget, e.pointerId); }}
-            onClick={(e) => e.stopPropagation()}>
-            <GripVertical size={19} color={C.ink3} strokeWidth={2} />
+        <span style={S.cardCompanyWrap}>
+          <MarqueeText text={p.company || "（無題）"} style={S.cardCompany} />
+        </span>
+        {replyN > 0 && (
+          <span style={S.cardReplyPill} title="要返信あり">
+            <Reply size={11} strokeWidth={2.4} />{replyN}
           </span>
         )}
+        {(dl || st) && (() => {
+          const d = dl || st;
+          const isDl = !!dl;
+          return (
+            <span style={{ ...S.cardDateInline, ...(d.overdue ? S.cardDeadlineOver : {}) }}
+              onPointerDown={stop}
+              onClick={isDl ? openPicker : undefined}>
+              {isDl && <input type="date" value={p.deadline || ""} style={S.cardDateHidden}
+                onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />}
+              {d.text}
+            </span>
+          );
+        })()}
+        {Number(p.reward) > 0 && (
+          <span style={S.cardRewardInline}>{yenMan(p.reward)}</span>
+        )}
       </div>
-
-      {(dl || st || Number(p.reward) > 0) && (
-        <div style={S.cardMetaLine}>
-          {st && (
-            <span style={{ ...S.cardDeadlineSub, cursor: "default", ...(st.overdue ? S.cardDeadlineOver : {}) }} onPointerDown={stop}>
-              <Clock size={13} strokeWidth={2} style={{ verticalAlign: "-2px", marginRight: 3 }} />{st.text}
-            </span>
-          )}
-          {dl && (
-            <span style={{ ...S.cardDeadlineSub, ...(dl.overdue ? S.cardDeadlineOver : {}) }} onPointerDown={stop} onClick={openPicker}>
-              納期 {dl.text}
-              <input type="date" value={p.deadline || ""} style={S.cardDateHidden}
-                onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />
-            </span>
-          )}
-          <span style={S.cardReward}>{yenMan(p.reward)}</span>
-        </div>
-      )}
 
       {showTasks.length > 0 && (
         <div style={S.cardTaskList}>
@@ -1290,6 +1331,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
                 </button>
                 <span style={S.cardTaskTitle}>
                   {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-2px" }} />}
+                  {(t.links || []).some((l) => l.url) && <Link2 size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-2px" }} />}
                   {t.title || "（無題）"}
                 </span>
                 {lab && <span style={lab.overdue ? S.cardTaskOver : S.cardTaskDate}
@@ -1550,6 +1592,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
         <div style={{ ...S.tcardTitle, ...(t.done ? S.trowDone : {}) }}>
           {t.kind === "reply" && <Reply size={13} color="#6B8AFF" strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
           {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
+          {(t.links || []).some((l) => l.url) && <Link2 size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
           {t.title || "（無題）"}
         </div>
         {t.kind === "reply" && !t.done && (
@@ -1638,9 +1681,24 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
     const empty = !d.company && !d.work && !d.note && !d.summary && !d.received
       && (!d.tasks || d.tasks.length === 0) && !d.deadline && !d.start && !d.reward && !d.replyUrl && !d.replyDraft;
     if (empty) return; // 新規で実質空なら保存しない
-    const t = setTimeout(() => { onAutoSave && onAutoSave(d); setAutoSaved(true); setTimeout(() => setAutoSaved(false), 1200); }, 350);
+    const t = setTimeout(() => { onAutoSave && onAutoSave(d); setAutoSaved(true); setTimeout(() => setAutoSaved(false), 1200); }, 100);
     return () => clearTimeout(t);
   }, [d]);
+
+  // 連続入力の途中でも0.5秒ごとに強制保存（相手端末が長時間"入力途中"の状態しか見えない事故を防ぐ）
+  const lastPushedRef = useRef(null);
+  useEffect(() => {
+    const id = setInterval(() => {
+      const dd = dRef.current;
+      if (!dd || dd === lastPushedRef.current) return;
+      const empty = !dd.company && !dd.work && !dd.note && !dd.summary && !dd.received
+        && (!dd.tasks || dd.tasks.length === 0) && !dd.deadline && !dd.start && !dd.reward && !dd.replyUrl && !dd.replyDraft;
+      if (empty) return;
+      lastPushedRef.current = dd;
+      onAutoSave && onAutoSave(dd);
+    }, 500);
+    return () => clearInterval(id);
+  }, []);
 
   // どんな閉じ方（戻る・スワイプ・スクリム・Enter）でも、アンマウント時に最新を確実に保存（反映漏れ防止）
   const dRef = useRef(d);
@@ -1718,7 +1776,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   const dismissAllDiff = () => { setPendingDiff([]); setParseMsg("反映をキャンセルしました。"); };
 
   const [justAddedId, setJustAddedId] = useState(null);
-  const addTask = () => { const id = uid(); set("tasks", [...d.tasks, { id, title: "", done: false, due: "", start: "", lane: "later", kind: "task", note: "", repeat: null }]); setJustAddedId(id); };
+  const addTask = () => { const id = uid(); set("tasks", [...d.tasks, { id, title: "", done: false, due: "", start: "", lane: "later", kind: "task", note: "", repeat: null, links: [] }]); setJustAddedId(id); };
   const setTask = (id, k, v) => set("tasks", d.tasks.map((t) => t.id === id ? { ...t, [k]: v } : t));
   const patchTask = (id, patch) => set("tasks", d.tasks.map((t) => t.id === id ? { ...t, ...patch } : t));
   const delTask = (id) => set("tasks", d.tasks.filter((t) => t.id !== id));
@@ -2057,7 +2115,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                   <button style={S.checkBtn} onClick={() => setTask(t.id, "done", !t.done)}>
                     {t.done ? <CheckCircle2 size={18} color="#51CF66" /> : <Circle size={18} color="#3A434F" />}
                   </button>
-                  <input style={{ ...S.taskInput, ...(t.done ? S.trowDone : {}) }} value={t.title}
+                  <AutoHeightTextarea style={{ ...S.taskInput, ...(t.done ? S.trowDone : {}) }} value={t.title}
                     autoFocus={t.id === justAddedId}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); closeWithSave(); } }}
                     placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
@@ -2073,6 +2131,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                   <DateField value={t.due} placeholder="期限" onChange={(v) => setTask(t.id, "due", v)} />
                 </div>
                 <RepeatField value={t.repeat} onChange={(patch) => patchTask(t.id, patch)} />
+                <LinksField links={t.links} onChange={(v) => setTask(t.id, "links", v)} />
               </div>
             ))}
             <button style={S.taskAddRow} onClick={addTask}>
@@ -2155,10 +2214,8 @@ function SettingsModal({ onClose, sync, syncState, onSaveSync, onSyncPush, onSyn
   const [diag, setDiag] = useState("");
   const [diagBusy, setDiagBusy] = useState(false);
 
-  // 同期設定の編集用ローカルコピー
-  const [sUrl, setSUrl] = useState(sync?.url || "");
-  const [sToken, setSToken] = useState(sync?.token || "");
-  const [sOn, setSOn] = useState(!!sync?.on);
+  // 同期設定の編集用ローカルコピー（on/offのみ）
+  const [sOn, setSOn] = useState(!!(sync && sync.on));
   const [syncSaved, setSyncSaved] = useState(false);
 
   useEffect(() => {
@@ -2173,7 +2230,7 @@ function SettingsModal({ onClose, sync, syncState, onSaveSync, onSyncPush, onSyn
   };
 
   const saveSyncCfg = async () => {
-    await onSaveSync({ url: sUrl.trim(), token: sToken.trim(), on: sOn });
+    await onSaveSync({ on: sOn });
     setSyncSaved(true); setTimeout(() => setSyncSaved(false), 1600);
   };
 
@@ -2214,44 +2271,49 @@ function SettingsModal({ onClose, sync, syncState, onSaveSync, onSyncPush, onSyn
 
           <div style={S.settingDivider} />
 
-          {/* ===== 端末間の同期 ===== */}
-          <Field label="端末間の同期（GAS＋スプレッドシート）">
+          {/* ===== 端末間の同期（Supabase） ===== */}
+          <Field label="端末間の同期（Supabase）">
             <div style={S.settingNote}>
-              スマホとPCで同じデータを見るための設定です。Googleスプレッドシートに用意したGAS Web AppのURLとキーを入力してください。設定手順は別ファイル「gas-sync.gs」のコメントを参照してください。
+              スマホとPCで同じデータをリアルタイム共有します。設定は不要（アプリに組込み済み）。トグルをONにするだけで、以降の変更は自動で反映されます。
             </div>
-          </Field>
-          <Field label="GAS Web App URL">
-            <input style={S.input} value={sUrl} placeholder="https://script.google.com/macros/s/.../exec"
-              onChange={(e) => setSUrl(e.target.value)} />
-          </Field>
-          <Field label="同期キー（GASに設定した合言葉）">
-            <input style={S.input} type="password" value={sToken} placeholder="任意の文字列"
-              onChange={(e) => setSToken(e.target.value)} />
           </Field>
           <label style={S.syncToggleRow} onClick={() => setSOn((v) => !v)}>
             <span style={{ ...S.syncCheck, ...(sOn ? S.syncCheckOn : {}) }}>{sOn && <Check size={13} strokeWidth={3} color="#fff" />}</span>
-            <span style={S.syncToggleLabel}>同期を有効にする（起動時に取得・変更時に保存）</span>
+            <span style={S.syncToggleLabel}>同期を有効にする</span>
           </label>
           <button style={S.saveBtn} onClick={saveSyncCfg}>{syncSaved ? "保存しました" : "同期設定を保存"}</button>
           <div style={S.syncBtnRow}>
-            <button style={S.syncSubBtn} onClick={onSyncPull} disabled={!sUrl || !sToken}><Download size={14} strokeWidth={2.3} />クラウドから取得</button>
-            <button style={S.syncSubBtn} onClick={onSyncPush} disabled={!sUrl || !sToken}><Upload size={14} strokeWidth={2.3} />クラウドへ保存</button>
+            <button style={S.syncSubBtn} onClick={onSyncPull} disabled={!sOn}><Download size={14} strokeWidth={2.3} />クラウドから取得</button>
+            <button style={S.syncSubBtn} onClick={onSyncPush} disabled={!sOn}><Upload size={14} strokeWidth={2.3} />クラウドへ保存</button>
           </div>
           <button style={{ ...S.syncSubBtn, width: "100%", justifyContent: "center", marginTop: 8 }}
-            disabled={!sUrl || !sToken || diagBusy}
+            disabled={diagBusy}
             onClick={async () => { setDiagBusy(true); setDiag("診断中…"); try { const r = await onDiagnose(); setDiag(r); } catch (e) { setDiag("診断に失敗しました: " + String(e.message || e)); } finally { setDiagBusy(false); } }}>
-            {diagBusy ? "診断中…" : "接続を診断（PC・スマホ両方で実行して比較）"}
+            {diagBusy ? "診断中…" : "接続を診断"}
           </button>
           {diag && <pre style={S.diagBox}>{diag}</pre>}
           {syncState && syncState.status !== "idle" && (
             <div style={{ ...S.syncStatus, color: syncStatusColor }}>{syncStatusText()}</div>
           )}
-          <div style={S.settingWarn}>このキーは簡易的な合言葉です。完全な認証ではないため、URLとキーは他人に教えないでください。複数端末で同時に編集すると、後から保存した内容で上書きされます。</div>
+          <div style={S.settingWarn}>複数端末で同時に編集すると、後から保存した内容で上書きされます。</div>
 
           <div style={S.settingDivider} />
           <div style={S.settingNote}>サンプルデータに戻します。この端末・ブラウザに保存中の案件・タスクはすべて消えます。</div>
           <button style={{ ...S.resetBtn, ...(resetting ? S.resetBtnConfirm : {}) }} onClick={resetSample}>
             {resetting ? "本当にリセットしますか？（もう一度タップ）" : "サンプルデータに戻す（リセット）"}
+          </button>
+
+          <div style={S.settingDivider} />
+          <div style={S.settingNote}>
+            この端末で動いているHelmの版数：<b style={{ color: C.ink }}>{BUILD_TAG}</b><br />
+            PC・スマホで同じ版数か確認してください。違う場合は下のボタンで強制更新できます。
+          </div>
+          <button style={S.syncSubBtn} onClick={async () => {
+            try { if (typeof caches !== "undefined") { const ks = await caches.keys(); await Promise.all(ks.map((k) => caches.delete(k))); } } catch {}
+            try { if (navigator.serviceWorker) { const rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map((r) => r.unregister())); } } catch {}
+            try { window.location.reload(true); } catch { window.location.reload(); }
+          }}>
+            <Download size={14} strokeWidth={2.3} />強制更新（キャッシュを消して再読み込み）
           </button>
         </div>
       </div>
@@ -2407,7 +2469,7 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
         </div>
         <div style={{ ...S.taskSheetBody, ...(wide ? { flex: 1 } : {}) }}>
-          <input style={S.titleInput} value={task.title} placeholder="やること"
+          <AutoHeightTextarea style={S.titleInput} value={task.title} placeholder="やること"
             onChange={(e) => onUpdate({ title: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); onClose(); } }} />
           <div style={S.infoRow}>
@@ -2426,6 +2488,10 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
           </div>
           <div style={S.infoRow}>
             <RepeatField value={task.repeat} onChange={(patch) => onUpdate(patch)} />
+          </div>
+          <div style={S.infoRow}>
+            <Link2 size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
+            <LinksField links={task.links} onChange={(v) => onUpdate({ links: v })} />
           </div>
           {project.id !== INBOX_ID && onStatusChange && (
             <div style={S.infoRow}>
@@ -2668,6 +2734,29 @@ function SharePicker({ intent, projects, onPick, onClose }) {
   );
 }
 
+// 内容に合わせて高さを自動調整するテキストエリア。長いタスク名を折り返して全体表示する用途。
+// Enter による改行はデフォルト動作。Enter で閉じたい呼び出し元は onKeyDown で e.preventDefault() する。
+function AutoHeightTextarea({ value, style, ...rest }) {
+  const ref = useRef(null);
+  const resize = () => {
+    const el = ref.current; if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  };
+  useEffect(() => { resize(); }, [value]);
+  useEffect(() => {
+    // マウント直後にも一度、フォント読み込み後の高さで再計算
+    const id = setTimeout(resize, 30);
+    return () => clearTimeout(id);
+  }, []);
+  return (
+    <textarea ref={ref} value={value} rows={1}
+      onInput={resize}
+      style={{ overflow: "hidden", resize: "none", wordBreak: "break-word", whiteSpace: "pre-wrap", ...style }}
+      {...rest} />
+  );
+}
+
 function extractLinks(text) {
   if (!text) return [];
   const out = [];
@@ -2730,15 +2819,118 @@ function urlAutoLabel(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
 }
 function linkLabelOf(l) { return (l && l.label && l.label.trim()) ? l.label.trim() : urlAutoLabel(l && l.url); }
+// リンク編集モーダル。編集中はローカルstateに閉じ込め、閉じる時に親へ確定反映。
+// 1文字ごとに親state（Drawerのd等）を更新すると、fast typing → fast close で
+// controlled inputが最終文字を落とすことがあるため、必ずこの形にする。
+function LinkEditModal({ initial, onSave, onDelete, onClose }) {
+  const [label, setLabel] = useState(initial.label || "");
+  const [url, setUrl] = useState(initial.url || "");
+  const latest = useRef({ label: initial.label || "", url: initial.url || "" });
+  const deleted = useRef(false);
+  const commit = () => {
+    if (deleted.current) { onClose(); return; }
+    onSave({ label: latest.current.label, url: latest.current.url });
+    onClose();
+  };
+  const doDelete = () => { deleted.current = true; onDelete(); };
+  // アンマウント時にも念のため保存（削除済みでない限り）
+  useEffect(() => () => {
+    if (deleted.current) return;
+    onSave({ label: latest.current.label, url: latest.current.url });
+  }, []);
+  const onLabel = (e) => { const v = e.target.value; latest.current.label = v; setLabel(v); };
+  const onUrl = (e) => { const v = e.target.value; latest.current.url = v; setUrl(v); };
+  return (
+    <>
+      <div style={S.linkModalScrim} onClick={commit} />
+      <div style={S.linkModal}>
+        <div style={S.linkModalHead}>
+          <span style={S.drawerTitle}>リンクを編集</span>
+          <button style={S.iconBtn} onClick={commit}><X size={18} /></button>
+        </div>
+        <div style={S.linkModalBody}>
+          <Field label="ラベル">
+            <input style={S.input} value={label} placeholder="例：GitHub"
+              onChange={onLabel}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); commit(); } }}
+              autoFocus={!initial.url} />
+          </Field>
+          <Field label="URL">
+            <input style={S.input} value={url} type="url" placeholder="https://..."
+              onChange={onUrl}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); commit(); } }}
+              autoFocus={!!initial.url && !initial.label} />
+          </Field>
+        </div>
+        <div style={S.linkModalFoot}>
+          <button style={S.linkModalDel} onClick={doDelete}>
+            <Trash2 size={14} strokeWidth={2.2} />削除
+          </button>
+          <button style={S.linkModalClose} onClick={commit}>閉じる</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// 内容がコンテナ幅を超えたら自動でループ横スクロール表示するテキスト。
+// はみ出さない場合は普通の1行表示。
+function MarqueeText({ text, style, gap = 40, seconds = 10 }) {
+  const wrapRef = useRef(null);
+  const measureRef = useRef(null);
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const check = () => {
+      const w = wrapRef.current, m = measureRef.current;
+      if (!w || !m) return;
+      setOverflow(m.scrollWidth > w.clientWidth + 1);
+    };
+    check();
+    let ro;
+    try {
+      ro = new ResizeObserver(check);
+      if (wrapRef.current) ro.observe(wrapRef.current);
+      if (measureRef.current) ro.observe(measureRef.current);
+    } catch {}
+    return () => { try { ro && ro.disconnect(); } catch {} };
+  }, [text]);
+  if (!overflow) {
+    return (
+      <span ref={wrapRef} style={{ ...style, display: "block", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+        <span ref={measureRef} style={{ display: "inline-block" }}>{text}</span>
+      </span>
+    );
+  }
+  return (
+    <span ref={wrapRef} style={{ ...style, display: "block", overflow: "hidden", whiteSpace: "nowrap", position: "relative" }}>
+      <span style={{ display: "inline-block", animation: `helm-marquee ${seconds}s linear infinite`, willChange: "transform" }}>
+        <span ref={measureRef} style={{ display: "inline-block", paddingRight: gap }}>{text}</span>
+        <span aria-hidden="true" style={{ display: "inline-block", paddingRight: gap }}>{text}</span>
+      </span>
+    </span>
+  );
+}
+
 // 案件詳細のリンク編集フィールド（Claude / GitHub / 公開URL などをワンタップ追加）
 function LinksField({ links, onChange }) {
   const list = Array.isArray(links) ? links : [];
   const [editId, setEditId] = useState(null);
-  const update = (id, patch) => onChange(list.map((l) => (l.id === id ? { ...l, ...patch } : l)));
-  const remove = (id) => { onChange(list.filter((l) => l.id !== id)); setEditId(null); };
+  // 常に最新のlistを参照するためのref（LinkEditModalのアンマウント時保存で使う）
+  const listRef = useRef(list); useEffect(() => { listRef.current = list; }, [list]);
+  const onChangeRef = useRef(onChange); useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+  const updateId = (id, patch) => {
+    const next = listRef.current.map((l) => (l.id === id ? { ...l, ...patch } : l));
+    onChangeRef.current(next);
+  };
+  const removeId = (id) => {
+    const next = listRef.current.filter((l) => l.id !== id);
+    onChangeRef.current(next);
+    setEditId(null);
+  };
   const add = (label) => {
     const id = uid();
-    onChange([...list, { id, label: label || "", url: "" }]);
+    const next = [...listRef.current, { id, label: label || "", url: "" }];
+    onChangeRef.current(next);
     setEditId(id); // 追加直後に編集モーダルを開く（URLをすぐ貼り付けられるように）
   };
   const editing = editId ? list.find((l) => l.id === editId) : null;
@@ -2774,33 +2966,13 @@ function LinksField({ links, onChange }) {
         ))}
       </div>
       {editing && (
-        <>
-          <div style={S.linkModalScrim} onClick={() => setEditId(null)} />
-          <div style={S.linkModal}>
-            <div style={S.linkModalHead}>
-              <span style={S.drawerTitle}>リンクを編集</span>
-              <button style={S.iconBtn} onClick={() => setEditId(null)}><X size={18} /></button>
-            </div>
-            <div style={S.linkModalBody}>
-              <Field label="ラベル">
-                <input style={S.input} value={editing.label} placeholder="例：GitHub"
-                  onChange={(e) => update(editing.id, { label: e.target.value })}
-                  onKeyDown={(e) => { if (e.key === "Enter") setEditId(null); }} autoFocus={!editing.url} />
-              </Field>
-              <Field label="URL">
-                <input style={S.input} value={editing.url} type="url" placeholder="https://..."
-                  onChange={(e) => update(editing.id, { url: e.target.value })}
-                  onKeyDown={(e) => { if (e.key === "Enter") setEditId(null); }} autoFocus={!!editing.url && !editing.label} />
-              </Field>
-            </div>
-            <div style={S.linkModalFoot}>
-              <button style={S.linkModalDel} onClick={() => remove(editing.id)}>
-                <Trash2 size={14} strokeWidth={2.2} />削除
-              </button>
-              <button style={S.linkModalClose} onClick={() => setEditId(null)}>閉じる</button>
-            </div>
-          </div>
-        </>
+        <LinkEditModal
+          key={editing.id}
+          initial={editing}
+          onSave={(patch) => updateId(editing.id, patch)}
+          onDelete={() => removeId(editing.id)}
+          onClose={() => setEditId(null)}
+        />
       )}
     </div>
   );
@@ -2823,6 +2995,7 @@ function Fonts() {
     ::-webkit-scrollbar { width: 9px; height: 9px; }
     ::-webkit-scrollbar-thumb { background: #333B46; border-radius: 6px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes helm-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
   `}</style>);
 }
 
@@ -3006,23 +3179,28 @@ const S = {
   focusKanEmpty: { color: C.ink3, fontSize: 13, padding: "6px 2px" },
   card: {
     position: "relative", textAlign: "left", overflow: "hidden",
-    display: "flex", flexDirection: "column", gap: 0, padding: "16px 18px",
-    background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, cursor: "pointer",
+    display: "flex", flexDirection: "column", gap: 0, padding: "12px 14px",
+    background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, cursor: "pointer",
   },
   cardBar: { display: "none" },
   cardInner: { flex: 1, display: "flex", flexDirection: "column" },
-  cardHead: { display: "flex", alignItems: "center", gap: 8, marginBottom: 9, minHeight: 20, justifyContent: "flex-end" },
-  cardGrip: { flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "6px 2px", marginLeft: 4, touchAction: "none", cursor: "grab", color: C.ink3 },
+  cardHead: { display: "none" },
+  cardGrip: { display: "none" },
+  cardMainRow: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 },
+  cardCompanyWrap: { flex: 1, minWidth: 0, overflow: "hidden" },
+  cardDateInline: { position: "relative", flexShrink: 0, fontSize: 13.5, color: C.ink2, fontWeight: 600, cursor: "pointer" },
+  cardRewardInline: { flexShrink: 0, fontFamily: F.disp, fontWeight: 800, fontSize: 15, fontVariantNumeric: "tabular-nums", letterSpacing: 0.3, color: C.ink2 },
   cardDragging: { opacity: 0.85, boxShadow: `0 0 0 2px ${C.accent}, 0 10px 24px rgba(0,0,0,0.45)`, cursor: "grabbing" },
   cardDragOther: { transition: "transform 0.12s ease" },
   cardStatus: { display: "none" },
-  cardReplyPill: { display: "inline-flex", alignItems: "center", gap: 3, fontSize: 13.5, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.15)", padding: "3px 9px", borderRadius: 7 },
+  cardReplyPill: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 3, fontSize: 12, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.15)", padding: "2px 7px", borderRadius: 6 },
   statusPillWait: { display: "inline-flex", alignItems: "center", fontSize: 13, fontWeight: 700, color: "#D9A23B", background: "rgba(217,162,59,0.15)", padding: "3px 10px", borderRadius: 7 },
   statusPillPay: { display: "inline-flex", alignItems: "center", fontSize: 13, fontWeight: 700, color: "#51CF66", background: "rgba(81,207,102,0.15)", padding: "3px 10px", borderRadius: 7 },
   statusDot: { display: "none" },
-  cardCompanyRow: { display: "flex", alignItems: "center", gap: 12, marginBottom: 8 },
+  cardCompanyRow: { display: "none" },
   cardCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
-  cardCompany: { flex: 1, minWidth: 0, fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, lineHeight: 1.3 },
+
+  cardCompany: { fontFamily: F.disp, fontWeight: 800, fontSize: 17, letterSpacing: 0.2, lineHeight: 1.3, color: C.ink },
   cardWork: { display: "none" },
   cardMetaLine: { display: "flex", alignItems: "baseline", gap: 10 },
   cardDeadlineSub: { position: "relative", fontSize: 14.5, color: C.ink2, fontWeight: 600, cursor: "pointer" },
@@ -3053,7 +3231,7 @@ const S = {
   cardReward: { fontFamily: F.disp, fontWeight: 800, fontSize: 16, fontVariantNumeric: "tabular-nums", letterSpacing: 0.3, color: C.ink2, marginLeft: "auto" },
   cardDue: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
   cardDueNone: { display: "none" },
-  cardTaskList: { display: "flex", flexDirection: "column", gap: 13, marginTop: 14, paddingTop: 14, paddingLeft: 32, borderTop: `1px solid ${C.line}` },
+  cardTaskList: { display: "flex", flexDirection: "column", gap: 9, marginTop: 10, paddingTop: 9, paddingLeft: 30, borderTop: `1px solid ${C.line}` },
   cardTaskRow: { display: "flex", alignItems: "center", gap: 12, cursor: "pointer" },
   cardTaskCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
   cardTaskEdit: { display: "flex", flexDirection: "column", gap: 8, padding: "10px 11px", background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 10 },
