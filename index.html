@@ -1207,7 +1207,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
     lpTimer.current = setTimeout(() => {
       lpTimer.current = null;
       if (downInfo.current) onDragHandle(p.id, downInfo.current.el, downInfo.current.pointerId);
-    }, 180);
+    }, 400);
   };
   const cardMove = (e) => {
     if (lpTimer.current && downInfo.current) {
@@ -1503,7 +1503,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
     ["今日", dStrLocal(0)], ["明日", dStrLocal(1)], ["3日後", dStrLocal(3)], ["1週間後", dStrLocal(7)], ["なし", ""],
   ];
   const setSchedule = (val) => { onChangeStart ? onChangeStart(val) : onChangeDue(val); };
-  // 長押し（180ms）で並べ替えドラッグ開始
+  // 長押し（400ms）で並べ替えドラッグ開始
   const lpTimer = useRef(null);
   const downInfo = useRef(null);
   const tdown = (e) => {
@@ -1511,7 +1511,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
     downInfo.current = { el: e.currentTarget, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
     lpTimer.current = setTimeout(() => {
       if (downInfo.current && onStartDrag) onStartDrag(t.project.id, t.id, downInfo.current.el, downInfo.current.pointerId, lane);
-    }, 180);
+    }, 400);
   };
   const tmove = (e) => {
     if (!downInfo.current || !lpTimer.current) return;
