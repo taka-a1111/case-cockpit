@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-02h"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-02i"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -996,8 +996,6 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
   };
 
   const cards = [
-    { key: "weekDue", label: "7日以内", value: kpi.weekDue, unit: "件", color: "#9AA4B2", Icon: CalendarDays },
-    { key: "overdue", label: "期限超過", value: kpi.overdue, unit: "件", color: "#FF6B6B", Icon: AlertTriangle, hot: kpi.overdue > 0 },
     { key: "progress", label: "進行中の見込み", value: kpi.revenue ? yenMan(kpi.revenue) : "—", unit: "", color: "#E8ECF2", Icon: Coins, wide: true, count: kpi.inProgress },
   ];
 
@@ -1016,17 +1014,16 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
           const opened = openCard === c.key;
           return (
             <button key={c.key} onClick={() => setOpenCard(opened ? null : c.key)}
-              style={{ ...S.kpiCard, ...S.kpiCardBtn,
+              style={{ ...S.kpiCard, ...S.kpiCardBtn, display: "flex", alignItems: "center", gap: 10,
                 ...(c.hot && !opened ? { boxShadow: `inset 0 0 0 1.5px ${c.color}33` } : {}),
                 ...(opened ? { borderColor: c.color, background: c.color + "1A", boxShadow: `0 0 0 2px ${c.color}` } : {}) }}>
-              <div style={S.kpiTop}>
-                <span style={{ ...S.kpiLabel, ...(opened ? { color: C.ink, fontWeight: 700 } : {}) }}>{c.label}</span>
-                <c.Icon size={17} color={c.color} strokeWidth={2.2} />
-              </div>
-              <div style={{ ...S.kpiValue, color: c.color, fontSize: c.wide ? 19 : 26 }}>
+              <c.Icon size={17} color={c.color} strokeWidth={2.2} />
+              <span style={{ ...S.kpiLabel, ...(opened ? { color: C.ink, fontWeight: 700 } : {}) }}>{c.label}</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ ...S.kpiValue, color: c.color, fontSize: 18, lineHeight: 1 }}>
                 {c.value}<span style={S.kpiUnit}>{c.unit}</span>
-              </div>
-              {opened && <span style={{ ...S.kpiHint, color: c.color, fontWeight: 700 }}>▲ 閉じる</span>}
+              </span>
+              {opened && <span style={{ ...S.kpiHint, color: c.color, fontWeight: 700, marginLeft: 6 }}>▲</span>}
             </button>
           );
         })}
@@ -3168,7 +3165,7 @@ const S = {
   },
   addLabel: {},
 
-  main: { padding: "20px 16px 64px", maxWidth: 1120, margin: "0 auto" },
+  main: { padding: "10px 16px 64px", maxWidth: 1120, margin: "0 auto" },
   mainWide: { maxWidth: "none", paddingLeft: 24, paddingRight: 24 },
   viewDots: { display: "flex", justifyContent: "center", gap: 7, marginBottom: 14 },
   focusFilterBar: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12 },
@@ -3179,7 +3176,7 @@ const S = {
   sortItemOn: { background: C.accent + "26", color: C.accent, fontWeight: 700 },
   viewDot: { width: 7, height: 7, borderRadius: "50%", background: C.line, transition: "background 0.15s, width 0.15s" },
   viewDotOn: { background: C.accent, width: 20 },
-  colWrap: { display: "flex", flexDirection: "column", gap: 22, width: "100%", maxWidth: 720, marginLeft: "auto", marginRight: "auto" },
+  colWrap: { display: "flex", flexDirection: "column", gap: 12, width: "100%", maxWidth: 720, marginLeft: "auto", marginRight: "auto" },
 
   /* KPI */
   /* reply panel (要返信一覧) */
@@ -3231,8 +3228,8 @@ const S = {
   replyItemCheck: { flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer", marginTop: 2 },
   replyItemLink: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.16)", padding: "6px 11px", borderRadius: 8, textDecoration: "none", flexShrink: 0, whiteSpace: "nowrap" },
 
-  kpiRow: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 },
-  kpiCard: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 11px", textAlign: "left", width: "100%" },
+  kpiRow: { display: "grid", gridTemplateColumns: "1fr", gap: 8 },
+  kpiCard: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: "8px 12px", textAlign: "left", width: "100%" },
   kpiCardBtn: { cursor: "pointer" },
   kpiHint: { display: "block", marginTop: 4, fontSize: 13, color: C.ink3, fontWeight: 600 },
   kpiTop: { display: "flex", alignItems: "center", justifyContent: "space-between" },
@@ -3286,7 +3283,7 @@ const S = {
   /* card grid — PCでも1〜2列に抑える */
   grid: { display: "grid", gridTemplateColumns: "1fr", gap: 14, alignItems: "start", maxWidth: 720, marginLeft: "auto", marginRight: "auto" },
   focusKanban: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, alignItems: "start" },
-  focusCenter: { width: "100%", maxWidth: 980, marginLeft: "auto", marginRight: "auto", display: "flex", flexDirection: "column", gap: 22 },
+  focusCenter: { width: "100%", maxWidth: 980, marginLeft: "auto", marginRight: "auto", display: "flex", flexDirection: "column", gap: 12 },
   focusKanCol: { display: "flex", flexDirection: "column", minWidth: 0 },
   focusKanHead: { display: "flex", alignItems: "center", gap: 8, padding: "0 2px 14px" },
   focusKanTitle: { fontSize: 14.5, fontWeight: 700, color: C.ink2 },
