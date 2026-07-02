@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-02e"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-02g"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -1385,18 +1385,21 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
         <div style={S.cardFoot}>
           {li && (
             <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
-              style={{ ...S.openLinkCard, color: li.color, background: li.color + "22" }}
+              style={{ ...S.openLinkCard, color: li.color, background: li.color + "22", padding: "5px 8px" }}
               onPointerDown={stop} onClick={stop} title={li.label}>
-              <ExternalLink size={13} strokeWidth={2.4} />{li.short}
+              <ExternalLink size={13} strokeWidth={2.4} />
             </a>
           )}
-          {(p.links || []).filter((l) => l.url).slice(0, 3).map((l) => (
-            <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer"
-              style={S.openLinkCard}
-              onPointerDown={stop} onClick={stop} title={linkLabelOf(l)}>
-              <ExternalLink size={13} strokeWidth={2.4} />{linkLabelOf(l)}
-            </a>
-          ))}
+          {(p.links || []).filter((l) => l.url).slice(0, 5).map((l) => {
+            const { Icon, color } = linkIconOf(l);
+            return (
+              <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer"
+                style={{ ...S.cardLinkIcon, borderColor: color + "55" }}
+                onPointerDown={stop} onClick={stop} title={linkLabelOf(l)}>
+                <Icon size={14} color={color} strokeWidth={2.3} />
+              </a>
+            );
+          })}
         </div>
       )}
     </div>
@@ -2657,11 +2660,18 @@ function DateField({ value, placeholder, onChange, autoOpen }) {
 }
 function PlatformChip({ name, small }) {
   const c = PLATFORMS[name] || "#8E97A6";
+  // プラットフォームごとにアイコンと色を割り当て
+  let Icon = Briefcase, col = "#9AA4B2";
+  if (name === "クラウドワークス") { Icon = Briefcase; col = "#4CAF50"; }
+  else if (name === "ランサーズ") { Icon = Briefcase; col = "#00A0DC"; }
+  else if (name === "ココナラ") { Icon = Briefcase; col = "#F7A800"; }
+  else if (name === "直契約") { Icon = MessageCircle; col = "#9AA4B2"; }
+  else if (name === "その他") { Icon = Globe; col = "#9AA4B2"; }
+  const s = small ? 12 : 13;
   return (
-    <span style={{
-      ...S.chip, color: c, background: c + "16",
-      fontSize: small ? 10 : 11, padding: small ? "1px 6px" : "2px 8px",
-    }}>{name}</span>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: col }} title={name}>
+      <Icon size={s} strokeWidth={2.3} />
+    </span>
   );
 }
 function SectionHead({ icon, title, sub }) {
@@ -3691,6 +3701,7 @@ const S = {
   linkChip: { width: 40, height: 40, borderRadius: 12, border: `1px solid ${C.line}`, background: C.panel2, display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", cursor: "pointer", padding: 0 },
   linkChipLabel: { fontSize: 10.5, color: C.ink2, textAlign: "center", lineHeight: 1.1, maxWidth: 54, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   linkChipEdit: { position: "absolute", top: -4, right: 0, width: 18, height: 18, borderRadius: "50%", border: `1px solid ${C.line}`, background: C.panel, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, cursor: "pointer" },
+  cardLinkIcon: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1px solid ${C.line}`, background: C.panel2, textDecoration: "none", cursor: "pointer" },
 };
 
 
