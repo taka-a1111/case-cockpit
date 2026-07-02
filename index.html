@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-02t"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-03a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -1648,7 +1648,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
     downInfo.current = { el: e.currentTarget, pointerId: e.pointerId, x: e.clientX, y: e.clientY };
     lpTimer.current = setTimeout(() => {
       if (downInfo.current && onStartDrag) onStartDrag(t.project.id, t.id, downInfo.current.el, downInfo.current.pointerId, lane);
-    }, 400);
+    }, 300);
   };
   const tmove = (e) => {
     if (!downInfo.current || !lpTimer.current) return;
@@ -3547,7 +3547,7 @@ const S = {
   laneList: { display: "flex", flexDirection: "column", gap: 8 },
   laneEmpty: { border: "1.5px dashed #333B46", borderRadius: 10, padding: "14px 8px", textAlign: "center", fontSize: 14.5, color: C.ink3, fontWeight: 500 },
 
-  tcard: { position: "relative", textAlign: "left", overflow: "hidden", display: "flex", alignItems: "flex-start", gap: 10, background: "transparent", border: "none", borderRadius: 0, padding: "8px 0", cursor: "pointer" },
+  tcard: { position: "relative", textAlign: "left", overflow: "hidden", display: "flex", alignItems: "flex-start", gap: 10, background: "transparent", border: "none", borderRadius: 0, padding: "8px 0", cursor: "pointer", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" },
   tcardDone: { opacity: 0.62, cursor: "default" },
   tcardTitle: { fontSize: 16.5, fontFamily: F.disp, fontWeight: 700, lineHeight: 1.35, letterSpacing: 0.15, color: C.ink, wordBreak: "break-word" },
   tcardMeta: { display: "flex", alignItems: "center", gap: 7, marginTop: 6, flexWrap: "wrap" },
