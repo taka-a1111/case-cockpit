@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-02j"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-02k"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -2917,25 +2917,38 @@ function LinksField({ links, onChange }) {
     const re = /https?:\/\/[^\s"'<>()「」【】、,]+/g;
     return Array.from(new Set(text.match(re) || [])).map((u) => u.replace(/[.,、。]+$/, ""));
   };
-  // URLを一括で追加（重複はスキップ）。ラベルは urlAutoLabel で自動判定。
-  const addUrls = (urls) => {
-    const cur = listRef.current;
-    const known = new Set(cur.map((l) => (l.url || "").trim()));
+  // 確認待ちのペンディングリンク（貼付け → ラベル確認 → 追加）
+  const [pending, setPending] = useState([]);
+  const [pasteVal, setPasteVal] = useState("");
+  const pushPending = (urls) => {
+    const known = new Set(listRef.current.map((l) => (l.url || "").trim()));
     const additions = urls
       .map((u) => u.trim())
       .filter((u) => u && !known.has(u))
-      .map((u) => ({ id: uid(), label: urlAutoLabel(u) || "", url: u }));
-    if (!additions.length) return 0;
-    onChangeRef.current([...cur, ...additions]);
-    return additions.length;
+      .map((u) => ({ id: uid(), url: u, label: urlAutoLabel(u) || "" }));
+    if (!additions.length) return;
+    setPending((p) => [...p, ...additions]);
   };
-  const [pasteVal, setPasteVal] = useState("");
+  const confirmPending = (id) => {
+    const p = pending.find((x) => x.id === id);
+    if (!p) return;
+    const lbl = (p.label || "").trim() || urlAutoLabel(p.url) || "";
+    onChangeRef.current([...listRef.current, { id: uid(), label: lbl, url: p.url }]);
+    setPending((prev) => prev.filter((x) => x.id !== id));
+  };
+  const confirmAllPending = () => {
+    const adds = pending.map((p) => ({ id: uid(), label: (p.label || "").trim() || urlAutoLabel(p.url) || "", url: p.url }));
+    onChangeRef.current([...listRef.current, ...adds]);
+    setPending([]);
+  };
+  const cancelPending = (id) => setPending((prev) => prev.filter((x) => x.id !== id));
+  const editPendingLabel = (id, label) => setPending((prev) => prev.map((x) => x.id === id ? { ...x, label } : x));
   const onPasteBulk = (e) => {
     const text = (e.clipboardData || window.clipboardData || {}).getData ? e.clipboardData.getData("text") : "";
     const urls = extractUrls(text);
     if (urls.length) {
       e.preventDefault();
-      addUrls(urls);
+      pushPending(urls);
       setPasteVal("");
     }
   };
@@ -2944,8 +2957,8 @@ function LinksField({ links, onChange }) {
     e.preventDefault();
     const urls = extractUrls(pasteVal);
     const single = pasteVal.trim();
-    if (urls.length) addUrls(urls);
-    else if (/^https?:\/\//i.test(single)) addUrls([single]);
+    if (urls.length) pushPending(urls);
+    else if (/^https?:\/\//i.test(single)) pushPending([single]);
     setPasteVal("");
   };
   const editing = editId ? list.find((l) => l.id === editId) : null;
@@ -2975,19 +2988,51 @@ function LinksField({ links, onChange }) {
       })}
       <input
         style={S.linkPasteInput}
-        placeholder="URLをここに貼り付け（複数OK。Chatwork / CW / Claude など自動判定）"
+        placeholder="URLを貼り付け（複数OK。自動でラベル判定→確認して追加）"
         value={pasteVal}
         onChange={(e) => setPasteVal(e.target.value)}
         onPaste={onPasteBulk}
         onKeyDown={onKeyBulk}
       />
-      <div style={S.linkPresetRow}>
-        {["Claude", "GitHub", "Chatwork", "CW", "公開", "その他"].map((pl) => (
-          <button key={pl} style={S.linkPresetBtn} onClick={() => add(pl === "その他" ? "" : pl)}>
-            <Plus size={12} strokeWidth={2.8} />{pl}
-          </button>
-        ))}
-      </div>
+      {pending.length > 0 && (
+        <div style={S.pendingLinkWrap}>
+          {pending.map((p) => {
+            const guess = urlAutoLabel(p.url) || "";
+            const isHost = !!guess && guess === (() => { try { return new URL(p.url).hostname.replace(/^www\./, ""); } catch { return ""; } })();
+            const prompt = isHost ? "このリンクの名前を入力" : `『${guess}』として追加しますか？`;
+            return (
+              <div key={p.id} style={S.pendingLinkRow}>
+                <div style={S.pendingLinkPrompt}>{prompt}</div>
+                <div style={S.pendingLinkUrl} title={p.url}>{p.url}</div>
+                <div style={S.pendingLinkForm}>
+                  <input
+                    style={S.pendingLinkInput}
+                    placeholder="ラベル"
+                    value={p.label}
+                    autoFocus={isHost}
+                    onChange={(e) => editPendingLabel(p.id, e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); confirmPending(p.id); } }}
+                  />
+                  <button style={S.pendingLinkAdd} onClick={() => confirmPending(p.id)}>
+                    <Check size={14} strokeWidth={2.8} />追加
+                  </button>
+                  <button style={S.pendingLinkCancel} onClick={() => cancelPending(p.id)} title="キャンセル">
+                    <X size={14} strokeWidth={2.4} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          {pending.length > 1 && (
+            <button style={S.pendingLinkAll} onClick={confirmAllPending}>
+              <Check size={13} strokeWidth={2.8} />{pending.length}件をまとめて追加
+            </button>
+          )}
+        </div>
+      )}
+      <button style={S.linkAddManualBtn} onClick={() => add("")}>
+        <Plus size={13} strokeWidth={2.6} />URL以外・手入力で追加
+      </button>
       {editing && (
         <LinkEditModal
           key={editing.id}
@@ -3589,6 +3634,16 @@ const S = {
   linkPresetRow: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 },
   linkPresetBtn: { display: "inline-flex", alignItems: "center", gap: 3, border: `1px solid ${C.line}`, background: C.panel2, color: C.ink2, borderRadius: 8, padding: "5px 10px", fontSize: 13, fontWeight: 600 },
   linkPasteInput: { width: "100%", boxSizing: "border-box", background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, padding: "8px 12px", fontSize: 13.5, marginTop: 6, marginBottom: 6, outline: "none" },
+  linkAddManualBtn: { display: "inline-flex", alignItems: "center", gap: 4, border: `1px dashed ${C.line}`, background: "transparent", color: C.ink3, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 500, marginTop: 4, cursor: "pointer" },
+  pendingLinkWrap: { display: "flex", flexDirection: "column", gap: 8, marginTop: 4, marginBottom: 4 },
+  pendingLinkRow: { display: "flex", flexDirection: "column", gap: 4, background: C.panel2, border: `1px solid ${C.accent}55`, borderRadius: 10, padding: "10px 12px" },
+  pendingLinkPrompt: { fontSize: 12.5, color: C.accent, fontWeight: 700 },
+  pendingLinkUrl: { fontSize: 11.5, color: C.ink3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  pendingLinkForm: { display: "flex", alignItems: "center", gap: 6, marginTop: 2 },
+  pendingLinkInput: { flex: 1, minWidth: 0, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, padding: "6px 10px", fontSize: 13.5, outline: "none" },
+  pendingLinkAdd: { display: "inline-flex", alignItems: "center", gap: 3, border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "6px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer" },
+  pendingLinkCancel: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, border: `1px solid ${C.line}`, background: C.panel, color: C.ink3, borderRadius: 8, padding: 0, cursor: "pointer" },
+  pendingLinkAll: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4, border: "none", background: C.accent + "22", color: C.accent, borderRadius: 8, padding: "6px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" },
   linkChipRow: { display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 4 },
   linkChipWrap: { position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, width: 54 },
   linkChip: { width: 40, height: 40, borderRadius: 12, border: `1px solid ${C.line}`, background: C.panel2, display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", cursor: "pointer", padding: 0 },
