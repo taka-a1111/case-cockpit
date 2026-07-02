@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-02m"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-02o"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -850,8 +850,15 @@ export default function App() {
       <header style={S.header}>
         <div style={{ ...S.brand, cursor: "pointer" }} onClick={() => { if (typeof window !== "undefined") window.location.reload(); }} title="タップで再読み込み">
           <div style={S.brandMark}>H</div>
-          <div style={S.brandDate}>{(() => { const d = new Date(); return `${d.getMonth() + 1}月${d.getDate()}日（${WD_JP[d.getDay()]}）`; })()}</div>
+          <div style={S.brandLabel}>Helm 案件管理</div>
         </div>
+        {wide && (
+          <div style={S.headerKpi} title="進行中の案件の見込み合計">
+            <Coins size={16} color="#E8ECF2" strokeWidth={2.2} />
+            <span style={S.headerKpiLabel}>進行中の見込み</span>
+            <span style={S.headerKpiValue}>{kpi.revenue ? yenMan(kpi.revenue) : "—"}</span>
+          </div>
+        )}
         <nav style={S.tabs}>
           {[
             ["focus", "フォーカス", LayoutDashboard],
@@ -1009,6 +1016,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
   return (
     <div style={{ ...S.colWrap, ...(wide ? { maxWidth: "none" } : {}) }}>
       <div style={wide ? S.focusCenter : { display: "contents" }}>
+      {!wide && (
       <div style={S.kpiRow}>
         {cards.map((c) => {
           const opened = openCard === c.key;
@@ -1028,6 +1036,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
           );
         })}
       </div>
+      )}
 
       {openCard && (
         <div style={{ ...S.replyPanel, borderColor: panelColor }}>
@@ -1387,7 +1396,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
               <ExternalLink size={13} strokeWidth={2.4} />{li.short}
             </a>
           )}
-          {(p.links || []).filter((l) => l.url).slice(0, 3).map((l) => (
+          {(p.links || []).filter((l) => l.url).map((l) => (
             <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer"
               style={S.openLinkCard}
               onPointerDown={stop} onClick={stop} title={linkLabelOf(l)}>
@@ -3097,6 +3106,10 @@ const S = {
   },
   brandTitle: { fontFamily: F.disp, fontWeight: 700, fontSize: 16, letterSpacing: 0.2, lineHeight: 1.1 },
   brandDate: { fontFamily: F.disp, fontWeight: 700, fontSize: 15, color: C.ink, letterSpacing: 0.2, whiteSpace: "nowrap" },
+  brandLabel: { fontFamily: F.disp, fontWeight: 800, fontSize: 15, color: C.ink, letterSpacing: 0.3, whiteSpace: "nowrap" },
+  headerKpi: { position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", display: "inline-flex", alignItems: "center", gap: 8, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "5px 14px", whiteSpace: "nowrap" },
+  headerKpiLabel: { fontSize: 12, color: C.ink2, fontWeight: 600 },
+  headerKpiValue: { fontFamily: F.disp, fontWeight: 800, fontSize: 15, color: C.ink, letterSpacing: 0.3, fontVariantNumeric: "tabular-nums" },
   brandSub: { fontSize: 14, color: C.ink3, marginTop: 2 },
 
   tabs: { display: "flex", gap: 4, background: C.panel2, padding: 4, borderRadius: 12, border: `1px solid ${C.line}` },
