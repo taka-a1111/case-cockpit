@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-02i"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-02j"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -2040,96 +2040,6 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
           <div style={S.linkRow}>
             <Link2 size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <LinksField links={d.links} onChange={(v) => set("links", v)} />
-          </div>
-
-          {/* ===== やり取り（AI返信案） ===== */}
-          <div style={S.replyBlock}>
-            <div style={S.replyBlockHead}>
-              <Sparkles size={14} color={C.accent} strokeWidth={2.3} />
-              <span style={S.replyBlockTitle}>返信アシスト</span>
-              {repliedLabel && (
-                <span style={S.repliedBadge}><Check size={11} strokeWidth={3} />{repliedLabel} 返信済み</span>
-              )}
-            </div>
-
-            <div style={S.infoRow}>
-              <Reply size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
-              <textarea style={{ ...S.infoInput, minHeight: 90 }} value={d.received} rows={4}
-                placeholder="届いたメッセージ"
-                onChange={(e) => set("received", e.target.value)} />
-            </div>
-
-            <div style={S.infoRow}>
-              <Link2 size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
-              <input style={S.infoInput} value={d.replyUrl} type="url"
-                placeholder="返信先URL"
-                onKeyDown={enterClose}
-                onChange={(e) => set("replyUrl", e.target.value)} />
-            </div>
-            {d.replyUrl && (() => { const li = linkInfo(d.replyUrl); return (
-              <a href={d.replyUrl} target="_blank" rel="noopener noreferrer" style={{ ...S.openDestBtn, color: li.color, borderColor: li.color + "55" }}>
-                <ExternalLink size={14} strokeWidth={2.4} />{li.label}
-              </a>
-            ); })()}
-
-            <div style={S.assistBtnRow}>
-              <button style={{ ...S.genBtn, ...(generating ? S.genBtnBusy : {}) }} onClick={generateReply} disabled={generating || extracting}>
-                {generating ? <><span style={S.spinner} />生成中…</> : <><Sparkles size={14} strokeWidth={2.4} />返信案を生成</>}
-              </button>
-              <button style={{ ...S.extractBtn, ...(extracting ? S.genBtnBusy : {}) }} onClick={extractTasks} disabled={generating || extracting}>
-                {extracting ? <><span style={S.spinnerDark} />抽出中…</> : <><ListPlus size={14} strokeWidth={2.4} />やることを抽出</>}
-              </button>
-            </div>
-            {extractMsg && <div style={S.extractMsg}>{extractMsg}</div>}
-            {genError && <div style={S.genError}>{genError}</div>}
-
-            {pendingTasks.length > 0 && (
-              <div style={S.pendingBox}>
-                <div style={S.pendingHead}>
-                  <span style={S.pendingTitle}>抽出されたタスク（{pendingTasks.filter((t) => t.on).length}/{pendingTasks.length}）</span>
-                  <button style={{ ...S.mergeToggle, ...(mergeMode ? S.mergeToggleOn : {}) }} onClick={() => setMergeMode((v) => !v)}>
-                    <Combine size={13} strokeWidth={2.4} />1つにまとめる
-                  </button>
-                </div>
-                <div style={S.pendingList}>
-                  {pendingTasks.map((t) => (
-                    <div key={t.id} style={S.pendingRow}>
-                      <button style={S.pendingCheck} onClick={() => togglePending(t.id)} title={t.on ? "反映する" : "無視する"}>
-                        {t.on ? <CheckCircle2 size={18} color={C.accent} strokeWidth={2.4} /> : <Circle size={18} color="#3A434F" />}
-                      </button>
-                      <input style={{ ...S.pendingInput, ...(t.on ? {} : S.pendingInputOff) }} value={t.title}
-                        onChange={(e) => editPending(t.id, e.target.value)} />
-                    </div>
-                  ))}
-                </div>
-                <div style={S.pendingFoot}>
-                  <button style={S.pendingCancel} onClick={cancelPending}>キャンセル</button>
-                  <button style={S.pendingApply} onClick={applyPending}>
-                    <Plus size={14} strokeWidth={2.6} />{mergeMode ? "まとめて登録" : `${pendingTasks.filter((t) => t.on).length}件を登録`}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {d.replyDraft && (
-              <div style={S.replyResult}>
-                <div style={S.replyResultHead}>
-                  <span style={S.fieldLabel}>送信メッセージ案</span>
-                  <button style={S.copyBtn} onClick={copyReply}>
-                    {copied ? <><Check size={12} strokeWidth={3} />コピー済み</> : <><Copy size={12} strokeWidth={2.4} />コピー</>}
-                  </button>
-                </div>
-                <textarea style={{ ...S.input, minHeight: 110, resize: "vertical", lineHeight: 1.6 }} value={d.replyDraft}
-                  onChange={(e) => set("replyDraft", e.target.value)} />
-                <button style={S.repliedBtn} onClick={markReplied}>
-                  <CheckCircle2 size={15} strokeWidth={2.4} />送信した（返信済みにする）
-                </button>
-              </div>
-            )}
-
-            {(d.replyHistory && d.replyHistory.length > 0) && (
-              <ReplyHistoryList history={d.replyHistory} />
-            )}
           </div>
 
           {/* ===== tasks ===== */}
