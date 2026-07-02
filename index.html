@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-02r"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-02t"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -980,6 +980,8 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
   // 案件一覧（進行中のみ）。並び替えモードで順序を切り替え
   const dueOf = (p) => { const n = daysUntil(p.deadline); return n === null ? Infinity : n; };
   let cardList = projects.filter((p) => p.id !== INBOX_ID && p.status !== "完了");
+  const doneList = (allProjects || projects).filter((p) => p.id !== INBOX_ID && p.status === "完了");
+  const [showDone, setShowDone] = useState(false);
   if (sortMode === "reward") cardList = [...cardList].sort((a, b) => (Number(b.reward) || 0) - (Number(a.reward) || 0));
   else if (sortMode === "dueAsc") cardList = [...cardList].sort((a, b) => dueOf(a) - dueOf(b));
   else if (sortMode === "dueDesc") cardList = [...cardList].sort((a, b) => {
@@ -1200,6 +1202,21 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
             </div>
           </>
         )}
+        {doneList.length > 0 && (
+          <div style={S.doneSection}>
+            <button style={S.doneAccordion} onClick={() => setShowDone((v) => !v)}>
+              <ChevronRight size={13} strokeWidth={2.4} style={{ transform: showDone ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+              完了 ({doneList.length}件)
+            </button>
+            {showDone && (
+              <div style={S.doneGrid}>
+                {doneList.map((p) => (
+                  <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );
@@ -1415,8 +1432,13 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
 function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChangeLane, onChangeDue, onChangeStart, onAddTask, onReorderTask, onReorderCommit, onToggleProject, activeLane, setActiveLane }) {
   const wide = useWideScreen();
   const [adding, setAdding] = useState(null); // 追加中のレーンキー（null=なし）
-  const [hideDone, setHideDone] = useState(false);
+  const [openDone, setOpenDone] = useState(() => new Set()); // アコーディオンで完了を開いているレーン
   const [dragTid, setDragTid] = useState(null);
+  const toggleOpenDone = (lane) => setOpenDone((prev) => {
+    const next = new Set(prev);
+    if (next.has(lane)) next.delete(lane); else next.add(lane);
+    return next;
+  });
 
   // 長押し→上下ドラッグでタスクを並べ替え（同一レーン内なら案件をまたいでも移動可）
   const startTaskDrag = (pid, tid, el, pointerId, dragLane) => {
@@ -1460,23 +1482,26 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
     projects.forEach((p) => { if (p.id !== INBOX_ID && p.status === st) { const n = openTasksOf(p).length; c += n > 0 ? n : 1; } });
     return c;
   };
-  const laneTasks = (lane) => all
+  const laneTasks = (lane, doneOnly) => all
     .filter((t) => t._lane === lane)
-    .filter((t) => !(hideDone && t.done))
+    .filter((t) => doneOnly ? t.done : !t.done)
     .sort((a, b) => (a.done === b.done ? 0 : a.done ? 1 : -1));
 
-  // レーンごとの案件グループを構築
-  const buildGroups = (lane) => {
-    const items = laneTasks(lane);
+  // レーンごとの案件グループを構築（doneOnly=true で完了タスクのみ）
+  const buildGroups = (lane, doneOnly) => {
+    const items = laneTasks(lane, doneOnly);
     const groups = []; const gmap = new Map();
     items.forEach((t) => {
       if (!gmap.has(t.project.id)) { const g = { project: t.project, tasks: [] }; gmap.set(t.project.id, g); groups.push(g); }
       gmap.get(t.project.id).tasks.push(t);
     });
-    const st = laneStatusOf(lane);
-    if (st) projects.forEach((p) => { if (p.id === INBOX_ID || p.status !== st || gmap.has(p.id)) return; groups.push({ project: p, tasks: [], projectOnly: true }); });
+    if (!doneOnly) {
+      const st = laneStatusOf(lane);
+      if (st) projects.forEach((p) => { if (p.id === INBOX_ID || p.status !== st || gmap.has(p.id)) return; groups.push({ project: p, tasks: [], projectOnly: true }); });
+    }
     return groups;
   };
+  const doneCountLane = (lane) => all.filter((t) => t._lane === lane && t.done).length;
 
   const renderGroups = (lane, groups) => groups.map((g) => (
     <div key={g.project.id} style={S.taskGroup}>
@@ -1514,14 +1539,11 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
   if (wide) {
     return (
       <div style={S.kanWrap}>
-        <div style={S.kanTop}>
-          <button style={{ ...S.replyFilter, ...(hideDone ? S.replyFilterOn : {}) }} onClick={() => setHideDone((v) => !v)}>
-            <CheckCircle2 size={13} strokeWidth={2.4} /> 完了を隠す
-          </button>
-        </div>
         <div style={S.kanban}>
           {TASK_LANES.map((L) => {
             const groups = buildGroups(L.key);
+            const dn = doneCountLane(L.key);
+            const isDoneOpen = openDone.has(L.key);
             return (
               <div key={L.key} style={S.kanbanCol} data-lane={L.key}>
                 <div style={S.kanColHead}>
@@ -1537,6 +1559,15 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
                 )}
                 <div style={S.kanColBody}>
                   {groups.length === 0 ? <div style={S.kanEmpty}>なし</div> : renderGroups(L.key, groups)}
+                  {dn > 0 && (
+                    <>
+                      <button style={S.doneAccordion} onClick={() => toggleOpenDone(L.key)}>
+                        <ChevronRight size={13} strokeWidth={2.4} style={{ transform: isDoneOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+                        完了 ({dn}件)
+                      </button>
+                      {isDoneOpen && renderGroups(L.key, buildGroups(L.key, true))}
+                    </>
+                  )}
                 </div>
               </div>
             );
@@ -1569,10 +1600,6 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
       <div style={S.laneBar}>
         <span style={{ ...S.laneDot, background: activeMeta.color }} />
         <span style={S.laneBarTitle}>{activeMeta.label}</span>
-        <button style={{ ...S.replyFilter, ...(hideDone ? S.replyFilterOn : {}) }}
-          onClick={() => setHideDone((v) => !v)}>
-          <CheckCircle2 size={13} strokeWidth={2.4} /> 完了を隠す
-        </button>
         <button style={S.laneBarAdd} onClick={() => setAdding(adding ? null : activeLane)}>
           <Plus size={15} strokeWidth={2.6} /> 追加
         </button>
@@ -1587,6 +1614,15 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
       <div style={S.swipeArea} data-lane={activeLane}>
         {!hasAny && !adding && <Empty text="このレーンにタスクはありません。" />}
         {renderGroups(activeLane, groups)}
+        {doneCountLane(activeLane) > 0 && (
+          <>
+            <button style={S.doneAccordion} onClick={() => toggleOpenDone(activeLane)}>
+              <ChevronRight size={13} strokeWidth={2.4} style={{ transform: openDone.has(activeLane) ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+              完了 ({doneCountLane(activeLane)}件)
+            </button>
+            {openDone.has(activeLane) && renderGroups(activeLane, buildGroups(activeLane, true))}
+          </>
+        )}
       </div>
     </div>
   );
@@ -2055,15 +2091,9 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
           <div style={S.subtaskHead}>
             <CornerDownRight size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <span style={S.subtaskHeadLabel}>タスク</span>
-            {d.tasks.some((t) => t.done) && (
-              <button style={{ ...S.replyFilter, ...(hideDoneTasks ? S.replyFilterOn : {}) }}
-                onClick={() => setHideDoneTasks((v) => !v)}>
-                <CheckCircle2 size={13} strokeWidth={2.4} /> 完了を隠す
-              </button>
-            )}
           </div>
           <div style={S.taskEditList}>
-            {d.tasks.filter((t) => !(hideDoneTasks && t.done)).map((t) => (
+            {d.tasks.filter((t) => !t.done).map((t) => (
               <div key={t.id} style={S.taskEditRow}>
                 <div style={S.taskEditTop}>
                   <button style={S.checkBtn} onClick={() => setTask(t.id, "done", !t.done)}>
@@ -2091,6 +2121,27 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
             <button style={S.taskAddRow} onClick={addTask}>
               <Plus size={17} strokeWidth={2.6} />タスクを追加
             </button>
+            {d.tasks.some((t) => t.done) && (
+              <>
+                <button style={S.doneAccordion} onClick={() => setHideDoneTasks((v) => !v)}>
+                  <ChevronRight size={13} strokeWidth={2.4} style={{ transform: hideDoneTasks ? "none" : "rotate(90deg)", transition: "transform 0.15s" }} />
+                  完了 ({d.tasks.filter((t) => t.done).length}件)
+                </button>
+                {!hideDoneTasks && d.tasks.filter((t) => t.done).map((t) => (
+                  <div key={t.id} style={{ ...S.taskEditRow, opacity: 0.65 }}>
+                    <div style={S.taskEditTop}>
+                      <button style={S.checkBtn} onClick={() => setTask(t.id, "done", !t.done)}>
+                        <CheckCircle2 size={18} color="#51CF66" />
+                      </button>
+                      <AutoHeightTextarea style={{ ...S.taskInput, ...S.trowDone }} value={t.title}
+                        onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); closeWithSave(); } }}
+                        placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
+                      <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#616B7A" /></button>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </div>
 
@@ -3571,6 +3622,9 @@ const S = {
   taskGroup: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12 },
   taskGroupHead: { display: "flex", alignItems: "center", gap: 9, border: "none", background: "transparent", padding: 0, width: "100%", textAlign: "left" },
   taskGroupTasks: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10, paddingTop: 9, paddingLeft: 30, borderTop: `1px solid ${C.line}` },
+  doneAccordion: { display: "flex", alignItems: "center", gap: 6, border: "none", background: "transparent", color: C.ink2, padding: "10px 4px", fontSize: 13.5, fontWeight: 700, textAlign: "left", cursor: "pointer", width: "100%", marginTop: 4 },
+  doneSection: { marginTop: 16 },
+  doneGrid: { display: "flex", flexDirection: "column", gap: 8, marginTop: 4 },
   taskGroupBar: { width: 4, height: 18, borderRadius: 3, flexShrink: 0 },
   groupCheck: { display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", padding: 0 },
   taskGroupName: { fontFamily: F.disp, fontWeight: 800, fontSize: 17, letterSpacing: 0.2, lineHeight: 1.3, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
