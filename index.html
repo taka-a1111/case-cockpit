@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-03h"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-03j"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -109,6 +109,14 @@ const PLATFORMS = {
   "ココナラ": "#9AA4B2",
   "直契約": "#9AA4B2",
   "その他": "#9AA4B2",
+};
+// プラットフォームのロゴ風バッジ（頭文字＋固有色）。パッと見の識別用
+const PLATFORM_BADGE = {
+  "クラウドワークス": { short: "CW", color: "#4A9DFF" },
+  "ランサーズ":       { short: "LA", color: "#3FBF9F" },
+  "ココナラ":         { short: "CO", color: "#F0A34C" },
+  "直契約":           { short: "直", color: "#9AA4B2" },
+  "その他":           { short: "他", color: "#717C8C" },
 };
 const STATUSES = ["進行中", "相手待ち", "支払い待ち", "完了"];
 const REPLIES = ["なし", "要返信", "返信済み", "相手待ち"];
@@ -1231,10 +1239,9 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                 return (
                   <React.Fragment key={status}>
                     {status !== "進行中" && (
-                      <div style={S.focusGroupHead}>
-                        <span style={{ ...S.laneDot, background: color }} />
+                      <div style={{ ...S.focusGroupBar, background: color + "1A", border: `1px solid ${color}33`, color }}>
                         <span>{status}</span>
-                        <span style={S.focusGroupCount}>{items.length}</span>
+                        <span style={{ ...S.focusGroupCount, color }}>{items.length}</span>
                       </div>
                     )}
                     {items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
@@ -1276,7 +1283,7 @@ function PriorityRow({ p, onOpen }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={S.prowMeta}>
-          <PlatformChip name={p.platform} small />
+          <PlatformBadge name={p.platform} size={16} />
           {replyN > 0 && <span style={{ ...S.replyPill, color: "#6B8AFF", background: "rgba(107,138,255,0.15)" }}><Reply size={11} strokeWidth={2.4} />返信{replyN}</span>}
           {open > 0 && <span style={S.taskCount}><Circle size={10} strokeWidth={2.4} />{open}</span>}
           <span style={{ ...S.dueText, color: d.color }}>{d.text}</span>
@@ -1397,6 +1404,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
             ? <CheckCircle2 size={18} color="#51CF66" strokeWidth={2.2} />
             : <Circle size={18} color={C.ink3} strokeWidth={2} />}
         </button>
+        <PlatformBadge name={p.platform} />
         <span style={S.cardCompanyWrap}>
           <MarqueeText text={p.company || "（無題）"} style={S.cardCompany} />
         </span>
@@ -1425,25 +1433,23 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
 
       {showTasks.length > 0 && (
         <div style={S.cardTaskList}>
-          {showTasks.map((t) => {
-            const lab = dateLabelJP(taskJudgeDate(t));
-            return (
-              <div key={t.id} style={S.cardTaskRow} onPointerDown={stop}
-                onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "title"); }}>
-                <button style={S.cardTaskCheck} onPointerDown={stop}
-                  onClick={(e) => { stop(e); onToggleTask && onToggleTask(p.id, t.id); }} title="タスクを完了">
-                  <Circle size={18} color={C.ink3} strokeWidth={2} />
-                </button>
-                <span style={S.cardTaskTitle}>
-                  {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-2px" }} />}
-                  {(t.links || []).some((l) => l.url) && <Link2 size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-2px" }} />}
-                  {t.title || "（無題）"}
-                </span>
-                {lab && <span style={lab.overdue ? S.cardTaskOver : S.cardTaskDate}
-                  onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "title"); }}>{lab.text}</span>}
-              </div>
-            );
-          })}
+          {showTasks.map((t) => (
+            <div key={t.id} style={S.cardTaskRow} onPointerDown={stop}
+              onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "title"); }}>
+              <button style={S.cardTaskCheck} onPointerDown={stop}
+                onClick={(e) => { stop(e); onToggleTask && onToggleTask(p.id, t.id); }} title="タスクを完了">
+                <Circle size={18} color={C.ink3} strokeWidth={2} />
+              </button>
+              <span style={S.cardTaskTitle}>
+                {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-2px" }} />}
+                {(t.links || []).some((l) => l.url) && <Link2 size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-2px" }} />}
+                {t.title || "（無題）"}
+              </span>
+              <TaskMetaChips t={t}
+                onChangeKind={(k) => onUpdateTask && onUpdateTask(p.id, t.id, { kind: k })}
+                onChangeStart={(v) => onUpdateTask && onUpdateTask(p.id, t.id, { start: v })} />
+            </div>
+          ))}
           {moreTasks > 0 && <div style={S.cardTaskMore}>ほか {moreTasks} 件</div>}
         </div>
       )}
@@ -1590,6 +1596,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
             <Circle size={18} color="#3A434F" strokeWidth={2.2} />
           </span>
         )}
+        {g.project.id !== INBOX_ID && <PlatformBadge name={g.project.platform} size={18} />}
         <span style={S.taskGroupName}>{g.project.company}</span>
       </button>
       <div style={S.taskGroupTasks}>
@@ -1710,22 +1717,21 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
   );
 }
 
-function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging, dragActive, onStartDrag, onChangeDue, onChangeStart, onChangeKind }) {
-  const judge = taskJudgeDate(t); // いつやる（start）優先、なければ期限（due）。レーン判定と一致させる
+// タスク行の右側チップ（状態切替＋日付クイック変更）。案件一覧・フィルタ表示で共通
+function TaskMetaChips({ t, onChangeKind, onChangeStart, onChangeDue }) {
+  const [dueOpen, setDueOpen] = useState(false);
+  if (t.kind === "reply") return null;
+  const judge = taskJudgeDate(t);
   const lab = judge ? dateLabelJP(judge) : null;
   const jn = judge ? daysUntil(judge) : null;
-  // 赤は「期限超過」のみ。今日は青、それ以外はグレー
-  const chipColor = jn === null ? C.ink3 : (jn < 0 ? "#FF6B6B" : C.ink2);
-  const [dueOpen, setDueOpen] = useState(false);
-  // kind切替：自分でやる → 相手待ち → 支払い待ち → 自分でやる（replyタスクは対象外）
+  const chipColor = jn === null ? C.ink3 : (jn < 0 ? "#FF6B6B" : C.ink2); // 赤は超過のみ
   const KIND_META = {
     task:    { Icon: User,      color: C.ink3,    label: "自分でやる" },
     waiting: { Icon: Hourglass, color: "#D9A23B", label: "相手待ち" },
     payment: { Icon: Coins,     color: "#51CF66", label: "支払い待ち" },
   };
   const kindMeta = KIND_META[t.kind] || KIND_META.task;
-  const cycleKind = (e) => {
-    e.stopPropagation();
+  const cycleKind = () => {
     const order = ["task", "waiting", "payment"];
     const next = order[(order.indexOf(t.kind === "reply" ? "task" : t.kind) + 1) % order.length];
     onChangeKind && onChangeKind(next);
@@ -1734,7 +1740,37 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
   const quick = [
     ["今日", dStrLocal(0)], ["明日", dStrLocal(1)], ["3日後", dStrLocal(3)], ["1週間後", dStrLocal(7)], ["なし", ""],
   ];
-  const setSchedule = (val) => { onChangeStart ? onChangeStart(val) : onChangeDue(val); };
+  const setSchedule = (val) => { onChangeStart ? onChangeStart(val) : (onChangeDue && onChangeDue(val)); };
+  return (
+    <div style={S.dueWrap} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      <button style={{ ...S.kindChip, borderColor: t.kind === "waiting" || t.kind === "payment" ? kindMeta.color + "55" : C.line }}
+        onClick={cycleKind} title={`状態：${kindMeta.label}（タップで切替）`}>
+        <kindMeta.Icon size={13} color={kindMeta.color} strokeWidth={2.3} />
+      </button>
+      <button style={{ ...S.dueChip, color: judge ? chipColor : C.ink3, borderColor: judge ? chipColor + "44" : C.line }}
+        onClick={() => setDueOpen((v) => !v)} title="いつやるかを変更">
+        <CalendarDays size={12} strokeWidth={2.3} />{lab ? lab.text : "日付"}
+      </button>
+      {dueOpen && (
+        <>
+          <div style={S.movePopScrim} onClick={() => setDueOpen(false)} />
+          <div style={S.duePop}>
+            {quick.map(([label, val]) => (
+              <button key={label} style={S.dueItem} onClick={() => { setSchedule(val); setDueOpen(false); }}>{label}</button>
+            ))}
+            <label style={S.dueDateRow}>
+              <span style={S.dueDateLabel}>日付指定</span>
+              <input type="date" style={S.dueDateInput} value={judge || ""}
+                onChange={(e) => { setSchedule(e.target.value); setDueOpen(false); }} />
+            </label>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging, dragActive, onStartDrag, onChangeDue, onChangeStart, onChangeKind }) {
   // 長押し（400ms）で並べ替えドラッグ開始
   const lpTimer = useRef(null);
   const downInfo = useRef(null);
@@ -1777,33 +1813,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
         )}
       </div>
 
-      {t.kind !== "reply" && (
-        <div style={S.dueWrap}>
-          <button style={{ ...S.kindChip, borderColor: t.kind === "waiting" || t.kind === "payment" ? kindMeta.color + "55" : C.line }}
-            onClick={cycleKind} title={`状態：${kindMeta.label}（タップで切替）`}>
-            <kindMeta.Icon size={13} color={kindMeta.color} strokeWidth={2.3} />
-          </button>
-          <button style={{ ...S.dueChip, color: judge ? chipColor : C.ink3, borderColor: judge ? chipColor + "44" : C.line }}
-            onClick={() => setDueOpen((v) => !v)} title="いつやるかを変更">
-            <CalendarDays size={12} strokeWidth={2.3} />{lab ? lab.text : "日付"}
-          </button>
-          {dueOpen && (
-            <>
-              <div style={S.movePopScrim} onClick={() => setDueOpen(false)} />
-              <div style={S.duePop}>
-                {quick.map(([label, val]) => (
-                  <button key={label} style={S.dueItem} onClick={() => { setSchedule(val); setDueOpen(false); }}>{label}</button>
-                ))}
-                <label style={S.dueDateRow}>
-                  <span style={S.dueDateLabel}>日付指定</span>
-                  <input type="date" style={S.dueDateInput} value={judge || ""}
-                    onChange={(e) => { setSchedule(e.target.value); setDueOpen(false); }} />
-                </label>
-              </div>
-            </>
-          )}
-        </div>
-      )}
+      <TaskMetaChips t={t} onChangeKind={onChangeKind} onChangeStart={onChangeStart} onChangeDue={onChangeDue} />
     </div>
   );
 }
@@ -2572,7 +2582,7 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
           <span style={S.taskSheetProject}>{project.company}</span>
           <button style={S.iconBtn} onClick={onClose}><X size={18} /></button>
         </div>
-        <div style={{ ...S.taskSheetBody, ...(wide ? { flex: 1 } : {}) }}>
+        <div style={{ ...S.taskSheetBody, flex: 1 }}>
           <AutoHeightTextarea style={S.titleInput} value={task.title} placeholder="やること"
             onChange={(e) => onUpdate({ title: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); onClose(); } }} />
@@ -2593,26 +2603,6 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
             <Link2 size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <LinksField links={task.links} onChange={(v) => onUpdate({ links: v })} />
           </div>
-          {task.kind !== "reply" && (
-            <div style={S.infoRow}>
-              <User size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
-              <div style={S.kindSegRow}>
-                {[
-                  ["task", "自分でやる", User, C.ink2],
-                  ["waiting", "相手待ち", Hourglass, "#D9A23B"],
-                  ["payment", "支払い待ち", Coins, "#51CF66"],
-                ].map(([k, label, Icon, col]) => {
-                  const on = (task.kind || "task") === k;
-                  return (
-                    <button key={k} style={{ ...S.kindSegBtn, ...(on ? { borderColor: col, color: col, background: col + "18" } : {}) }}
-                      onClick={() => onUpdate({ kind: k })}>
-                      <Icon size={13} strokeWidth={2.3} />{label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
           {project.id !== INBOX_ID && onStatusChange && (
             <div style={S.infoRow}>
               <Briefcase size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
@@ -2739,6 +2729,16 @@ function DateField({ value, placeholder, onChange, autoOpen }) {
       )}
       {open && <CalendarModal value={value} onChange={onChange} onClose={() => setOpen(false)} />}
     </span>
+  );
+}
+function PlatformBadge({ name, size }) {
+  const b = PLATFORM_BADGE[name];
+  if (!b) return null;
+  const s = size || 20;
+  return (
+    <span title={name} style={{ flexShrink: 0, width: s, height: s, borderRadius: Math.round(s * 0.3),
+      background: b.color + "26", color: b.color, display: "inline-flex", alignItems: "center", justifyContent: "center",
+      fontSize: Math.round(s * 0.46), fontWeight: 800, fontFamily: F.disp, letterSpacing: 0.3, lineHeight: 1 }}>{b.short}</span>
   );
 }
 function PlatformChip({ name, small }) {
@@ -3503,7 +3503,7 @@ const S = {
   focusKanBody: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0 },
   focusKanEmpty: { color: C.ink3, fontSize: 13, padding: "6px 2px" },
   card: {
-    position: "relative", textAlign: "left", overflow: "hidden",
+    position: "relative", textAlign: "left",
     display: "flex", flexDirection: "column", gap: 0, padding: "12px 14px",
     background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, cursor: "pointer",
   },
@@ -3525,7 +3525,7 @@ const S = {
   cardCompanyRow: { display: "none" },
   cardCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
 
-  cardCompany: { fontFamily: F.disp, fontWeight: 800, fontSize: 17, letterSpacing: 0.2, lineHeight: 1.3, color: C.ink },
+  cardCompany: { fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, lineHeight: 1.3, color: C.ink },
   cardWork: { display: "none" },
   cardMetaLine: { display: "flex", alignItems: "baseline", gap: 10 },
   cardDeadlineSub: { position: "relative", fontSize: 14.5, color: C.ink2, fontWeight: 600, cursor: "pointer" },
@@ -3557,7 +3557,7 @@ const S = {
   cardDue: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
   cardDueNone: { display: "none" },
   cardTaskList: { display: "flex", flexDirection: "column", gap: 9, marginTop: 10, paddingTop: 9, paddingLeft: 30, borderTop: `1px solid ${C.line}` },
-  cardTaskRow: { display: "flex", alignItems: "center", gap: 12, cursor: "pointer" },
+  cardTaskRow: { display: "flex", alignItems: "flex-start", gap: 12, cursor: "pointer" },
   cardTaskCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
   cardTaskEdit: { display: "flex", flexDirection: "column", gap: 8, padding: "10px 11px", background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 10 },
   cardTaskEditInput: { width: "100%", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 10px", fontSize: 15, color: C.ink },
@@ -3567,7 +3567,7 @@ const S = {
   cardTaskEditDate: { width: "100%", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 8px", fontSize: 14, color: C.ink2 },
   cardTaskEditDone: { border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "9px 16px", fontSize: 14, fontWeight: 700, flexShrink: 0 },
   cardTaskDot: { width: 7, height: 7, borderRadius: "50%", border: `1.5px solid ${C.ink3}`, flexShrink: 0 },
-  cardTaskTitle: { flex: 1, minWidth: 0, fontSize: 16.5, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  cardTaskTitle: { flex: 1, minWidth: 0, fontSize: 16.5, color: C.ink, lineHeight: 1.35, wordBreak: "break-word", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
   cardTaskDate: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: C.ink2 },
   cardTaskOver: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: "#FF8A8A", background: "rgba(255,107,107,0.13)", padding: "2px 9px", borderRadius: 7 },
   cardTaskDue: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0 },
@@ -3594,11 +3594,10 @@ const S = {
   /* drawer */
   scrim: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 40 },
   taskSheet: {
-    position: "fixed", left: 0, right: 0, top: 0, zIndex: 50,
-    background: C.bg, borderBottomLeftRadius: 20, borderBottomRightRadius: 20,
-    borderBottom: `1px solid ${C.line}`, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
-    display: "flex", flexDirection: "column", maxWidth: 620, marginLeft: "auto", marginRight: "auto",
-    maxHeight: "90vh", paddingTop: "env(safe-area-inset-top, 0px)",
+    position: "fixed", inset: 0, zIndex: 50,
+    background: C.bg,
+    display: "flex", flexDirection: "column",
+    paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)",
   },
   taskSheetHead: { display: "flex", alignItems: "center", gap: 10, padding: "14px 16px 6px" },
   taskSheetProject: { flex: 1, fontSize: 14, color: C.ink3, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
@@ -3720,7 +3719,7 @@ const S = {
   filterChip: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${C.line}`, background: "transparent", borderRadius: 999, padding: "7px 14px", fontSize: 14, fontWeight: 600, color: C.ink2, whiteSpace: "nowrap", cursor: "pointer" },
   filterChipOn: { borderColor: C.accent + "66", background: C.panel2, color: C.ink },
   filterChipCount: { fontSize: 12, fontWeight: 700, color: C.ink3 },
-  focusGroupHead: { display: "flex", alignItems: "center", gap: 7, padding: "8px 2px 0", fontSize: 13.5, fontWeight: 700, color: C.ink2 },
+  focusGroupBar: { display: "flex", alignItems: "center", gap: 8, padding: "8px 13px", borderRadius: 10, fontSize: 14, fontWeight: 800, fontFamily: F.disp, letterSpacing: 0.3, marginTop: 4 },
   focusGroupCount: { fontSize: 12, fontWeight: 700, color: C.ink3 },
   taskTab: { position: "relative", display: "flex", alignItems: "center", gap: 7, flexShrink: 0, border: `1px solid ${C.line}`, background: C.panel2, padding: "9px 14px", fontSize: 14, fontWeight: 700, color: C.ink2, whiteSpace: "nowrap", borderRadius: 10 },
   taskTabOn: { background: C.accent, borderColor: C.accent, color: "#fff" },
@@ -3826,7 +3825,7 @@ const S = {
   doneGrid: { display: "flex", flexDirection: "column", gap: 8, marginTop: 4 },
   taskGroupBar: { width: 4, height: 18, borderRadius: 3, flexShrink: 0 },
   groupCheck: { display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", padding: 0 },
-  taskGroupName: { fontFamily: F.disp, fontWeight: 800, fontSize: 17, letterSpacing: 0.2, lineHeight: 1.3, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  taskGroupName: { fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, lineHeight: 1.3, color: C.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   taskGroupCount: { fontFamily: F.disp, fontSize: 14, fontWeight: 800, color: "#fff", background: C.accent, borderRadius: 20, padding: "2px 9px", minWidth: 22, textAlign: "center", marginLeft: "auto", flexShrink: 0 },
 
   /* calendar */
