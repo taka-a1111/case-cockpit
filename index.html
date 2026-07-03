@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-03n"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-03o"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -104,18 +104,18 @@ async function sbSave(projects, base) {
 }
 
 const PLATFORMS = {
-  "クラウドワークス": "#9AA4B2",
-  "ランサーズ": "#9AA4B2",
-  "ココナラ": "#9AA4B2",
-  "直契約": "#9AA4B2",
-  "その他": "#9AA4B2",
+  "クラウドワークス": "#C0C9D6",
+  "ランサーズ": "#C0C9D6",
+  "ココナラ": "#C0C9D6",
+  "直契約": "#C0C9D6",
+  "その他": "#C0C9D6",
 };
 // プラットフォームのロゴ風バッジ（頭文字＋固有色）。パッと見の識別用
 const PLATFORM_BADGE = {
   "クラウドワークス": { short: "CW", color: "#4A9DFF" },
   "ランサーズ":       { short: "LA", color: "#3FBF9F" },
   "ココナラ":         { short: "CO", color: "#F0A34C" },
-  "直契約":           { short: "直", color: "#9AA4B2" },
+  "直契約":           { short: "直", color: "#C0C9D6" },
   "その他":           { short: "他", color: "#717C8C" },
 };
 const STATUSES = ["進行中", "相手待ち", "支払い待ち", "完了"];
@@ -130,7 +130,7 @@ const TASK_LANES = [
 
 // 案件一覧（フォーカス画面）のステータスタブ。スマホは横スワイプで切替、PCは3列カンバン。
 const FOCUS_STATUSES = [
-  { key: "進行中",     label: "進行中",     color: "#9AA4B2" },
+  { key: "進行中",     label: "進行中",     color: "#C0C9D6" },
   { key: "相手待ち",   label: "相手待ち",   color: "#D9A23B" },
   { key: "支払い待ち", label: "支払い待ち", color: "#51CF66" },
 ];
@@ -154,14 +154,14 @@ function makeInbox() {
 const REPLY_META = {
   "要返信":   { color: "#6B8AFF", bg: "rgba(107,138,255,0.15)", label: "要返信" },
   "返信済み": { color: "#51CF66", bg: "rgba(81,207,102,0.15)", label: "返信済み" },
-  "相手待ち": { color: "#9AA4B2", bg: "#212834", label: "相手待ち" },
-  "なし":     { color: "#616B7A", bg: "#212834", label: "—" },
+  "相手待ち": { color: "#C0C9D6", bg: "#212834", label: "相手待ち" },
+  "なし":     { color: "#8B95A5", bg: "#212834", label: "—" },
 };
 const STATUS_META = {
-  "進行中":   "#9AA4B2",
-  "相手待ち": "#9AA4B2",
-  "支払い待ち": "#9AA4B2",
-  "完了":     "#616B7A",
+  "進行中":   "#C0C9D6",
+  "相手待ち": "#C0C9D6",
+  "支払い待ち": "#C0C9D6",
+  "完了":     "#8B95A5",
 };
 // 旧ステータス→新ステータスの移行マップ
 const STATUS_MIGRATE = { "応募中": "進行中", "納品待ち": "相手待ち", "検収中": "相手待ち" };
@@ -242,13 +242,13 @@ function daysUntil(dateStr) {
 }
 function dueMeta(dateStr) {
   const n = daysUntil(dateStr);
-  if (n === null) return { n, color: "#616B7A", text: "期限なし", urgent: false };
+  if (n === null) return { n, color: "#8B95A5", text: "期限なし", urgent: false };
   if (n < 0)  return { n, color: "#FF6B6B", text: `${Math.abs(n)}日超過`, urgent: true };
   if (n === 0) return { n, color: "#FF6B6B", text: "今日", urgent: true };
   if (n === 1) return { n, color: "#FF6B6B", text: "明日", urgent: true };
   if (n <= 3) return { n, color: "#FF6B6B", text: `あと${n}日`, urgent: true };
-  if (n <= 7) return { n, color: "#9AA4B2", text: `あと${n}日`, urgent: false };
-  return { n, color: "#9AA4B2", text: `あと${n}日`, urgent: false };
+  if (n <= 7) return { n, color: "#C0C9D6", text: `あと${n}日`, urgent: false };
+  return { n, color: "#C0C9D6", text: `あと${n}日`, urgent: false };
 }
 const yen = (v) => (v ? "¥" + v.toLocaleString("ja-JP") : "—");
 // 万円表記：15000→1.5万円、30000→3万円、733000→73.3万円
@@ -834,6 +834,19 @@ export default function App() {
     }));
   const setDeadline = (pid, deadline) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, deadline }));
+  // ドラッグでタスクを別案件カードへ移動（末尾に追加）
+  const moveTaskToProject = (tid, destPid) => {
+    setProjects((prev) => {
+      let moved = null, srcPid = null;
+      for (const p of prev) { const f = p.tasks.find((t) => t.id === tid); if (f) { moved = f; srcPid = p.id; break; } }
+      if (!moved || !destPid || srcPid === destPid) return prev;
+      return prev.map((p) => {
+        if (p.id === srcPid) return { ...p, tasks: p.tasks.filter((t) => t.id !== tid) };
+        if (p.id === destPid) return { ...p, tasks: [...p.tasks, moved] };
+        return p;
+      });
+    });
+  };
   const updateTask = (pid, tid, patch) =>
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, ...patch } : t),
@@ -909,7 +922,7 @@ export default function App() {
   if (loading) return (
     <div style={S.shell}>
       <Fonts />
-      <div style={{ ...S.center, color: "#616B7A", fontFamily: F.body }}>読み込み中…</div>
+      <div style={{ ...S.center, color: "#8B95A5", fontFamily: F.body }}>読み込み中…</div>
     </div>
   );
 
@@ -962,13 +975,13 @@ export default function App() {
                   <span style={S.focusBoardCount}>{focusFilterCount(projects, f.key)}</span>
                 </div>
                 {f.key === "all"
-                  ? <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} sortMode={sortMode} setSortMode={setSortMode} />
+                  ? <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} onReorderTask={reorderTaskVisual} onMoveTask={moveTaskToProject} sortMode={sortMode} setSortMode={setSortMode} />
                   : <TasksView singleLane projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} activeLane={f.key} setActiveLane={() => {}} />}
               </div>
             ))}
           </div>
         )}
-        {view === "focus" && !wide && focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} sortMode={sortMode} setSortMode={setSortMode} />}
+        {view === "focus" && !wide && focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} onReorderTask={reorderTaskVisual} onMoveTask={moveTaskToProject} sortMode={sortMode} setSortMode={setSortMode} />}
         {view === "focus" && !wide && focusFilter !== "all" && <TasksView singleLane projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} activeLane={focusFilter} setActiveLane={setFocusFilter} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={openProject} />}
       </main>
@@ -1023,19 +1036,48 @@ export default function App() {
 /* ============================================================
    フォーカス（ダッシュボード）
    ============================================================ */
-function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, sortMode, setSortMode }) {
+function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, onReorderTask, onMoveTask, sortMode, setSortMode }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
 
-  const [sortOpen, setSortOpen] = useState(false);
   const [dragId, setDragId] = useState(null);
+  const [dragTaskId, setDragTaskId] = useState(null);
+  // タスク行の長押しドラッグ：行の上＝並べ替え／別案件カードの上＝その案件へ移動
+  const startTaskDrag = (pid, tid, el, pointerId) => {
+    try { el && el.setPointerCapture && pointerId != null && el.setPointerCapture(pointerId); } catch {}
+    setDragTaskId(tid);
+    const move = (ev) => {
+      if (ev.cancelable) ev.preventDefault();
+      const elAt = document.elementFromPoint(ev.clientX, ev.clientY);
+      if (!elAt) return;
+      const row = elAt.closest && elAt.closest("[data-tid]");
+      if (row) {
+        const overTid = row.getAttribute("data-tid");
+        const overPid = row.getAttribute("data-pid");
+        if (overTid && overTid !== tid) onReorderTask && onReorderTask(tid, overPid, overTid);
+        return;
+      }
+      const card = elAt.closest && elAt.closest("[data-pid]");
+      if (card) {
+        const overPid = card.getAttribute("data-pid");
+        if (overPid) onMoveTask && onMoveTask(tid, overPid);
+      }
+    };
+    const up = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("pointercancel", up);
+      setDragTaskId(null);
+      onReorderCommit && onReorderCommit();
+      const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); document.removeEventListener("click", swallow, true); };
+      document.addEventListener("click", swallow, true);
+      setTimeout(() => document.removeEventListener("click", swallow, true), 450);
+    };
+    document.addEventListener("pointermove", move, { passive: false });
+    document.addEventListener("pointerup", up);
+    document.addEventListener("pointercancel", up);
+  };
   const wide = useWideScreen();
-  useEffect(() => {
-    if (!sortOpen) return;
-    const close = (e) => { if (!e.target.closest || !e.target.closest("[data-sortwrap]")) setSortOpen(false); };
-    document.addEventListener("click", close, true);
-    return () => document.removeEventListener("click", close, true);
-  }, [sortOpen]);
 
   const startDrag = (pid, el, pointerId) => {
     try { el && el.setPointerCapture && pointerId != null && el.setPointerCapture(pointerId); } catch {}
@@ -1075,18 +1117,9 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
   let cardList = projects.filter((p) => p.id !== INBOX_ID && p.status !== "完了");
   const doneList = (allProjects || projects).filter((p) => p.id !== INBOX_ID && p.status === "完了");
   const [showDone, setShowDone] = useState(false);
-  if (sortMode === "reward") cardList = [...cardList].sort((a, b) => (Number(b.reward) || 0) - (Number(a.reward) || 0));
-  else if (sortMode === "dueAsc") cardList = [...cardList].sort((a, b) => dueOf(a) - dueOf(b));
-  else if (sortMode === "dueDesc") cardList = [...cardList].sort((a, b) => {
-    const da = dueOf(a), db = dueOf(b);
-    if (da === Infinity && db === Infinity) return 0;
-    if (da === Infinity) return 1; if (db === Infinity) return -1;
-    return db - da;
-  });
   // ステータス順を最優先：進行中→相手待ち→支払い待ち（各グループ内は上のソート順を維持）
   const statusRank = (p) => (p.status === "相手待ち" ? 1 : p.status === "支払い待ち" ? 2 : 0);
   cardList = [...cardList].sort((a, b) => statusRank(a) - statusRank(b));
-  const sortLabels = { manual: "手動（ドラッグ）", reward: "金額が高い順", dueAsc: "納期が近い順", dueDesc: "納期が遠い順" };
 
   const minDue = (p) => { const a = dueDaysList(p); return a.length ? Math.min(...a) : Infinity; };
   const lists = {
@@ -1196,7 +1229,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                     {openCard === "progress" && (
                       <span style={S.replyItemMetaRow}>
                         <span style={S.replyItemReward}>{yenMan(p.reward)}</span>
-                        <span style={{ ...S.replyItemDueSub, color: dm.n < 0 ? "#FF6B6B" : "#9AA4B2" }}>{dm.text}</span>
+                        <span style={{ ...S.replyItemDueSub, color: dm.n < 0 ? "#FF6B6B" : "#C0C9D6" }}>{dm.text}</span>
                       </span>
                     )}
                     {dueItems.length > 0 && (
@@ -1208,7 +1241,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                               ? <span onClick={(e) => { e.stopPropagation(); onToggleTask && onToggleTask(p.id, it.tid); }} style={S.dueTaskCheck} title="タスクを完了"><Circle size={16} color={C.ink3} strokeWidth={2} /></span>
                               : <span style={S.dueTaskCheck}>{it.isDeadline ? "📅" : ""}</span>}
                             <span style={S.dueTaskName}>{it.label}</span>
-                            <span style={{ ...S.dueTaskDays, color: it.n < 0 ? "#FF6B6B" : "#9AA4B2" }}>{dDays(it.n)}</span>
+                            <span style={{ ...S.dueTaskDays, color: it.n < 0 ? "#FF6B6B" : "#C0C9D6" }}>{dDays(it.n)}</span>
                           </span>
                         ))}
                       </span>
@@ -1229,21 +1262,6 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
       </div>
 
       <section>
-        <div style={S.sortWrap} data-sortwrap>
-          <button style={S.sortBtn} onClick={() => setSortOpen((v) => !v)}>
-            <ArrowUpDown size={15} strokeWidth={2.2} />並び替え
-          </button>
-          {sortOpen && (
-            <div style={S.sortMenu}>
-              {["manual", "reward", "dueAsc", "dueDesc"].map((k) => (
-                <button key={k} style={{ ...S.sortItem, ...(sortMode === k ? S.sortItemOn : {}) }}
-                  onClick={() => { setSortMode(k); setSortOpen(false); }}>
-                  {sortLabels[k]}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
         {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
         <div style={S.swipeArea}>
           {cardList.length > 0 && (
@@ -1259,7 +1277,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                         <span style={{ ...S.focusGroupCount, color }}>{items.length}</span>
                       </div>
                     )}
-                    {items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+                    {items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} onTaskDrag={startTaskDrag} taskDragId={dragTaskId} />)}
                   </React.Fragment>
                 );
               })}
@@ -1298,7 +1316,6 @@ function PriorityRow({ p, onOpen }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={S.prowMeta}>
-          <PlatformBadge name={p.platform} size={16} />
           {replyN > 0 && <span style={{ ...S.replyPill, color: "#6B8AFF", background: "rgba(107,138,255,0.15)" }}><Reply size={11} strokeWidth={2.4} />返信{replyN}</span>}
           {open > 0 && <span style={S.taskCount}><Circle size={10} strokeWidth={2.4} />{open}</span>}
           <span style={{ ...S.dueText, color: d.color }}>{d.text}</span>
@@ -1366,7 +1383,21 @@ function ProjectsView({ projects, onOpen }) {
   );
 }
 
-function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onToggleTask, onToggleProject, onDragHandle, dragging, dragActive }) {
+function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onToggleTask, onToggleProject, onDragHandle, dragging, dragActive, onTaskDrag, taskDragId }) {
+  // タスク行の長押し（300ms）でドラッグ開始
+  const tLp = useRef(null); const tDown = useRef(null);
+  const tRowDown = (e, tid) => {
+    e.stopPropagation();
+    if (e.target.closest && e.target.closest("button, input, a, label")) return;
+    tDown.current = { el: e.currentTarget, pointerId: e.pointerId, x: e.clientX, y: e.clientY, tid };
+    clearTimeout(tLp.current);
+    tLp.current = setTimeout(() => {
+      tLp.current = null;
+      if (tDown.current && onTaskDrag) onTaskDrag(p.id, tDown.current.tid, tDown.current.el, tDown.current.pointerId);
+    }, 300);
+  };
+  const tRowMove = (e) => { if (tLp.current && tDown.current && Math.hypot(e.clientX - tDown.current.x, e.clientY - tDown.current.y) > 10) { clearTimeout(tLp.current); tLp.current = null; } };
+  const tRowUp = () => { if (tLp.current) { clearTimeout(tLp.current); tLp.current = null; } };
   const replyN = replyTasksOf(p).length;
   const li = linkInfo(p.replyUrl);
   const dl = p.deadline ? dateLabelJP(p.deadline) : null;
@@ -1419,22 +1450,21 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
             ? <CheckCircle2 size={18} color="#51CF66" strokeWidth={2.2} />
             : <Circle size={18} color={C.ink3} strokeWidth={2} />}
         </button>
-        <PlatformBadge name={p.platform} />
         <span style={S.cardCompanyWrap}>
           <span style={{ ...S.cardCompany, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{p.company || "（無題）"}</span>
-          {(dl || st) && (() => {
-            const d = dl || st;
-            const isDl = !!dl;
-            return (
-              <span style={{ ...S.cardDateInline, display: "block", marginTop: 4, ...(d.overdue ? S.cardDeadlineOver : {}) }}
-                onPointerDown={stop}
-                onClick={isDl ? openPicker : undefined}>
-                {isDl && <input type="date" value={p.deadline || ""} style={S.cardDateHidden}
-                  onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />}
-                {isDl ? "納期 " : ""}{d.text}
-              </span>
-            );
-          })()}
+          {(st || dl) && (
+            <span style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
+              {st && <span style={S.cardDateInline}>いつやる {st.text}</span>}
+              {dl && (
+                <span style={{ ...S.cardDateInline, ...(dl.overdue ? S.cardDeadlineOver : {}) }}
+                  onPointerDown={stop} onClick={openPicker}>
+                  <input type="date" value={p.deadline || ""} style={S.cardDateHidden}
+                    onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />
+                  期限 {dl.text}
+                </span>
+              )}
+            </span>
+          )}
         </span>
         {replyN > 0 && (
           <span style={S.cardReplyPill} title="要返信あり">
@@ -1449,7 +1479,9 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
       {showTasks.length > 0 && (
         <div style={S.cardTaskList}>
           {showTasks.map((t) => (
-            <div key={t.id} style={S.cardTaskRow} onPointerDown={stop}
+            <div key={t.id} data-tid={t.id} data-pid={p.id}
+              style={{ ...S.cardTaskRow, ...(taskDragId === t.id ? { opacity: 0.4 } : {}), touchAction: taskDragId ? "none" : "pan-y" }}
+              onPointerDown={(e) => tRowDown(e, t.id)} onPointerMove={tRowMove} onPointerUp={tRowUp} onPointerCancel={tRowUp}
               onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "title"); }}>
               <button style={S.cardTaskCheck} onPointerDown={stop}
                 onClick={(e) => { stop(e); onToggleTask && onToggleTask(p.id, t.id); }} title="タスクを完了">
@@ -1477,14 +1509,14 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
             <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
               style={{ ...S.openLinkCard, color: li.color, background: li.color + "22" }}
               onPointerDown={stop} onClick={stop} title={li.label}>
-              <Favicon url={p.replyUrl} size={16} />{li.short}
+              <Favicon url={p.replyUrl} size={20} />
             </a>
           )}
           {(p.links || []).filter((l) => l.url).map((l) => (
             <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer"
               style={S.openLinkCard}
               onPointerDown={stop} onClick={stop} title={linkLabelOf(l)}>
-              <Favicon url={l.url} size={16} />{linkLabelOf(l)}
+              <Favicon url={l.url} size={20} />
             </a>
           ))}
         </div>
@@ -1614,7 +1646,6 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
             <Circle size={18} color="#3A434F" strokeWidth={2.2} />
           </span>
         )}
-        {g.project.id !== INBOX_ID && <PlatformBadge name={g.project.platform} size={18} />}
         <span style={S.taskGroupName}>{g.project.company}</span>
       </button>
       <div style={S.taskGroupTasks}>
@@ -2229,7 +2260,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                     autoFocus={t.id === justAddedId}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); closeWithSave(); } }}
                     placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
-                  <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#616B7A" /></button>
+                  <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#8B95A5" /></button>
                 </div>
                 <textarea style={S.taskNoteInput} value={t.note || ""} rows={1}
                   placeholder="詳細・メモ" onChange={(e) => setTask(t.id, "note", e.target.value)} />
@@ -2262,7 +2293,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                       <AutoHeightTextarea style={{ ...S.taskInput, ...S.trowDone }} value={t.title}
                         onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); closeWithSave(); } }}
                         placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
-                      <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#616B7A" /></button>
+                      <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#8B95A5" /></button>
                     </div>
                   </div>
                 ))}
@@ -2872,7 +2903,7 @@ function SearchModal({ projects, recentIds, onPick, onClose }) {
     else if (e.key === "Enter") { e.preventDefault(); if (results[selClamp]) onPick(results[selClamp]); }
     else if (e.key === "Escape") { e.preventDefault(); onClose(); }
   };
-  const stDot = { "進行中": "#9AA4B2", "相手待ち": "#D9A23B", "支払い待ち": "#51CF66", "完了": "#51CF66" };
+  const stDot = { "進行中": "#C0C9D6", "相手待ち": "#D9A23B", "支払い待ち": "#51CF66", "完了": "#51CF66" };
   return (
     <>
       <div style={S.scrim} onClick={onClose} />
@@ -3072,7 +3103,7 @@ function linkIconOf(l) {
   if (has("docs.google.com/spreadsheets") || lab === "sheet") return { Icon: Table, color: "#0F9D58" };
   if (has("docs.google.com/presentation") || lab === "slide") return { Icon: FileText, color: "#F4B400" };
   if (has("drive.google.com")) return { Icon: FileText, color: "#4285F4" };
-  if (has("vercel.app") || lab === "公開" || lab === "公開url") return { Icon: Globe, color: "#9AA4B2" };
+  if (has("vercel.app") || lab === "公開" || lab === "公開url") return { Icon: Globe, color: "#C0C9D6" };
   return { Icon: Link2, color: C.accent };
 }
 // リンク編集モーダル。編集中はローカルstateに閉じ込め、閉じる時に親へ確定反映。
@@ -3338,7 +3369,7 @@ function Fonts() {
     body { color: #E8ECF2; }
     button { cursor: pointer; font-family: inherit; }
     input, select, textarea { font-family: inherit; outline: none; color: #E8ECF2; background: #212834; }
-    input::placeholder, textarea::placeholder { color: #616B7A; }
+    input::placeholder, textarea::placeholder { color: #8B95A5; }
     select option { background: #212834; color: #E8ECF2; }
     ::-webkit-scrollbar { width: 9px; height: 9px; }
     ::-webkit-scrollbar-thumb { background: #333B46; border-radius: 6px; }
@@ -3356,7 +3387,7 @@ const F = {
 };
 const C = {
   bg: "#0F1318", panel: "#181D25", panel2: "#212834",
-  ink: "#E8ECF2", ink2: "#9AA4B2", ink3: "#616B7A",
+  ink: "#E8ECF2", ink2: "#C0C9D6", ink3: "#8B95A5",
   line: "#2A323D", accent: "#6B8AFF",
 };
 const S = {
@@ -3735,7 +3766,7 @@ const S = {
   copyBtn: { display: "flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, background: C.panel, borderRadius: 7, padding: "5px 9px", fontSize: 14.5, fontWeight: 700, color: C.ink2 },
   repliedBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, border: "1px solid #2E5E3F", background: "rgba(81,207,102,0.15)", color: "#51CF66", borderRadius: 9, padding: "9px 14px", fontSize: 14.5, fontWeight: 700 },
   openLink: { display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, borderRadius: 8, color: "#6B8AFF", background: "rgba(107,138,255,0.16)", textDecoration: "none", flexShrink: 0 },
-  openLinkCard: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 14.5, fontWeight: 700, color: "#6B8AFF", background: "rgba(107,138,255,0.16)", padding: "7px 12px", borderRadius: 9, textDecoration: "none" },
+  openLinkCard: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 38, height: 38, color: "#6B8AFF", background: "rgba(107,138,255,0.12)", borderRadius: 10, textDecoration: "none" },
   openDestBtn: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, border: "1px solid #3D4660", background: "rgba(107,138,255,0.16)", color: "#6B8AFF", borderRadius: 9, padding: "9px 14px", fontSize: 14.5, fontWeight: 700, textDecoration: "none" },
 
   /* kanban */
