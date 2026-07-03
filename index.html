@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-03u"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-03v"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -1469,7 +1469,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
         </button>
         <span style={S.cardCompanyWrap}>
           <span style={{ ...S.cardCompany, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{p.company || "（無題）"}</span>
-          {!dragActive && (st || dl) && (
+          {!dragActive && (st || dl || li || (p.links || []).some((l) => l.url)) && (
             <span style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
               {st && (
                 <span style={{ ...S.cardDateInline, display: "inline-flex", alignItems: "center", gap: 5 }} title="いつやる">
@@ -1484,6 +1484,18 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
                   <Flag size={13} strokeWidth={2.2} />{dl.text}
                 </span>
               )}
+              {li && (
+                <a href={p.replyUrl} target="_blank" rel="noopener noreferrer" style={S.cardLinkMini}
+                  onPointerDown={stop} onClick={stop} title={li.label}>
+                  <Favicon url={p.replyUrl} size={20} />
+                </a>
+              )}
+              {(p.links || []).filter((l) => l.url).map((l) => (
+                <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer" style={S.cardLinkMini}
+                  onPointerDown={stop} onClick={stop} title={linkLabelOf(l)}>
+                  <Favicon url={l.url} size={20} />
+                </a>
+              ))}
             </span>
           )}
         </span>
@@ -1524,24 +1536,6 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
         </div>
       )}
 
-      {!dragActive && (li || (p.links || []).some((l) => l.url)) && (
-        <div style={S.cardFoot}>
-          {li && (
-            <a href={p.replyUrl} target="_blank" rel="noopener noreferrer"
-              style={{ ...S.openLinkCard, color: li.color, background: li.color + "22" }}
-              onPointerDown={stop} onClick={stop} title={li.label}>
-              <Favicon url={p.replyUrl} size={20} />
-            </a>
-          )}
-          {(p.links || []).filter((l) => l.url).map((l) => (
-            <a key={l.id} href={l.url} target="_blank" rel="noopener noreferrer"
-              style={S.openLinkCard}
-              onPointerDown={stop} onClick={stop} title={linkLabelOf(l)}>
-              <Favicon url={l.url} size={20} />
-            </a>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -3663,6 +3657,7 @@ const S = {
   cardAddInput: { flex: 1, minWidth: 0, background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 8, padding: "8px 10px", fontSize: 14.5, color: C.ink },
   cardAddDone: { border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "8px 14px", fontSize: 14, fontWeight: 700, flexShrink: 0 },
   cardAddCancel: { border: "none", background: "transparent", color: C.ink3, fontSize: 18, fontWeight: 700, padding: "0 4px", flexShrink: 0 },
+  cardLinkMini: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, margin: "-4px 0", borderRadius: 8, textDecoration: "none" },
   cardFoot: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, paddingTop: 13, marginTop: 14, borderTop: `1px solid ${C.line}` },
   cardAddTaskBtn: { display: "inline-flex", alignItems: "center", gap: 5, border: `1px solid ${C.line}`, background: C.panel2, color: C.ink2, borderRadius: 9, padding: "7px 12px", fontSize: 13.5, fontWeight: 700 },
   cardTasksCount: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, color: C.ink3, fontWeight: 700, fontFamily: F.disp },
