@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-03f"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-03h"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -350,7 +350,6 @@ export default function App() {
   const [view, setView] = useState("focus");
   const [navStack, setNavStack] = useState([]); // 画面遷移の履歴（戻る用）
   const [focusFilter, setFocusFilter] = useState("all"); // 案件一覧のフィルタ（すべて/今日/明日以降/相手待ち/支払い待ち）
-  const [activeFocusStatus, setActiveFocusStatus] = useState("進行中"); // 案件一覧のステータスタブ（スマホのみ）
   // ===== 全体検索（Ctrl+K / ヘッダ🔍） =====
   const [showSearch, setShowSearch] = useState(false);
   const [recentIds, setRecentIds] = useState([]);
@@ -397,15 +396,11 @@ export default function App() {
     if (sx <= EDGE || sx >= winW() - EDGE) return; // 端から始まったスワイプは「戻る」に任せる
     const dx = t.clientX - navSwipe.current.x, dy = t.clientY - navSwipe.current.y;
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      if (view === "focus" && focusFilter !== "all") {
+      if (view === "focus") {
         const keys = FOCUS_FILTERS.map((f) => f.key);
         const idx = keys.indexOf(focusFilter);
         if (dx < 0 && idx < keys.length - 1) setFocusFilter(keys[idx + 1]);
         else if (dx > 0 && idx > 0) setFocusFilter(keys[idx - 1]);
-      } else if (view === "focus" && !wide) {
-        const idx = FOCUS_STATUSES.findIndex((L) => L.key === activeFocusStatus);
-        if (dx < 0 && idx < FOCUS_STATUSES.length - 1) setActiveFocusStatus(FOCUS_STATUSES[idx + 1].key);
-        else if (dx > 0 && idx > 0) setActiveFocusStatus(FOCUS_STATUSES[idx - 1].key);
       }
       // カレンダー画面は月移動を calGrid 側で拾う（e.stopPropagation で main まで届かない）
     }
@@ -948,9 +943,9 @@ export default function App() {
       </header>
 
       {/* ===== Body ===== */}
-      <main style={{ ...S.main, ...(wide && (view === "focus" && focusFilter === "all") ? S.mainWide : {}) }} onTouchStart={onMainTouchStart} onTouchEnd={onMainTouchEnd}>
+      <main style={S.main} onTouchStart={onMainTouchStart} onTouchEnd={onMainTouchEnd}>
         {view === "focus" && <FilterChips projects={projects} filter={focusFilter} onChange={setFocusFilter} />}
-        {view === "focus" && focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} activeFocusStatus={activeFocusStatus} setActiveFocusStatus={setActiveFocusStatus} sortMode={sortMode} setSortMode={setSortMode} />}
+        {view === "focus" && focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} sortMode={sortMode} setSortMode={setSortMode} />}
         {view === "focus" && focusFilter !== "all" && <TasksView singleLane projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} activeLane={focusFilter} setActiveLane={setFocusFilter} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={openProject} />}
       </main>
@@ -1005,7 +1000,7 @@ export default function App() {
 /* ============================================================
    フォーカス（ダッシュボード）
    ============================================================ */
-function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, activeFocusStatus, setActiveFocusStatus, sortMode, setSortMode }) {
+function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, sortMode, setSortMode }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
 
@@ -1091,8 +1086,8 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
     : panelList.length;
 
   return (
-    <div style={{ ...S.colWrap, ...(wide ? { maxWidth: "none" } : {}) }}>
-      <div style={wide ? S.focusCenter : { display: "contents" }}>
+    <div style={S.colWrap}>
+      <div style={{ display: "contents" }}>
       {!wide && (
       <div style={S.kpiRow}>
         {cards.map((c) => {
@@ -1227,56 +1222,28 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
           )}
         </div>
         {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
-        {wide ? (
-          <div style={S.focusKanban}>
-            {FOCUS_STATUSES.map(({ key: status, color }) => {
-              const items = cardList.filter((p) => p.status === status);
-              return (
-                <div key={status} style={S.focusKanCol}>
-                  <div style={S.focusKanHead}>
-                    <span style={{ ...S.laneDot, background: color }} />
-                    <span style={S.focusKanTitle}>{status}</span>
-                    <span style={S.focusKanCount}>{items.length}</span>
-                  </div>
-                  <div style={S.focusKanBody}>
-                    {items.length === 0
-                      ? <div style={S.focusKanEmpty}>なし</div>
-                      : items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <>
-            <div style={S.taskTabs}>
-              {FOCUS_STATUSES.map((L) => {
-                const active = activeFocusStatus === L.key;
-                const count = cardList.filter((p) => p.status === L.key).length;
+        <div style={S.swipeArea}>
+          {cardList.length > 0 && (
+            <div style={S.grid}>
+              {FOCUS_STATUSES.map(({ key: status, color }) => {
+                const items = cardList.filter((p) => p.status === status);
+                if (items.length === 0) return null;
                 return (
-                  <button key={L.key}
-                    style={{ ...S.taskTab, ...(active ? S.taskTabOn : {}) }}
-                    onClick={() => setActiveFocusStatus(L.key)}>
-                    <span style={{ ...S.laneDot, background: L.color }} />
-                    <span>{L.label}</span>
-                    <span style={{ ...S.taskTabCount, ...(active ? S.taskTabCountOn : {}) }}>{count}</span>
-                  </button>
+                  <React.Fragment key={status}>
+                    {status !== "進行中" && (
+                      <div style={S.focusGroupHead}>
+                        <span style={{ ...S.laneDot, background: color }} />
+                        <span>{status}</span>
+                        <span style={S.focusGroupCount}>{items.length}</span>
+                      </div>
+                    )}
+                    {items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
+                  </React.Fragment>
                 );
               })}
             </div>
-            <div style={S.swipeArea} data-focus-status={activeFocusStatus}>
-              {(() => {
-                const items = cardList.filter((p) => p.status === activeFocusStatus);
-                if (items.length === 0) return <Empty text="このステータスの案件はありません。" />;
-                return (
-                  <div style={S.grid}>
-                    {items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} />)}
-                  </div>
-                );
-              })()}
-            </div>
-          </>
-        )}
+          )}
+        </div>
         {doneList.length > 0 && (
           <div style={S.doneSection}>
             <button style={S.doneAccordion} onClick={() => setShowDone((v) => !v)}>
@@ -3753,6 +3720,8 @@ const S = {
   filterChip: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${C.line}`, background: "transparent", borderRadius: 999, padding: "7px 14px", fontSize: 14, fontWeight: 600, color: C.ink2, whiteSpace: "nowrap", cursor: "pointer" },
   filterChipOn: { borderColor: C.accent + "66", background: C.panel2, color: C.ink },
   filterChipCount: { fontSize: 12, fontWeight: 700, color: C.ink3 },
+  focusGroupHead: { display: "flex", alignItems: "center", gap: 7, padding: "8px 2px 0", fontSize: 13.5, fontWeight: 700, color: C.ink2 },
+  focusGroupCount: { fontSize: 12, fontWeight: 700, color: C.ink3 },
   taskTab: { position: "relative", display: "flex", alignItems: "center", gap: 7, flexShrink: 0, border: `1px solid ${C.line}`, background: C.panel2, padding: "9px 14px", fontSize: 14, fontWeight: 700, color: C.ink2, whiteSpace: "nowrap", borderRadius: 10 },
   taskTabOn: { background: C.accent, borderColor: C.accent, color: "#fff" },
   taskTabOver: { borderColor: C.accent, background: "rgba(107,138,255,0.18)" },
