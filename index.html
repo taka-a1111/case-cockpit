@@ -45,7 +45,7 @@ import {
   LayoutDashboard, Briefcase, ListChecks, Plus, X, Trash2, Reply,
   Clock, CheckCircle2, Circle, AlertTriangle, Inbox, Sparkles, Copy, Check,
   CalendarDays, Coins, ExternalLink, GripVertical, Settings, ChevronLeft, ChevronRight, ListPlus, Download, Upload,
-  AlignLeft, CornerDownRight, Link2, ArrowUpDown, Combine, Repeat, Pencil,
+  AlignLeft, CornerDownRight, Link2, ArrowUpDown, Combine, Repeat, Pencil, Flag,
   Github, MessageCircle, Globe, FileText, Table, User, Hourglass, Search
 } from "https://esm.sh/lucide-react@0.383.0?deps=react@18.2.0";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-03p"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-03q"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -1460,13 +1460,17 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
           <span style={{ ...S.cardCompany, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{p.company || "（無題）"}</span>
           {(st || dl) && (
             <span style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
-              {st && <span style={S.cardDateInline}>いつやる {st.text}</span>}
+              {st && (
+                <span style={{ ...S.cardDateInline, display: "inline-flex", alignItems: "center", gap: 5 }} title="いつやる">
+                  <CalendarDays size={13} strokeWidth={2.2} />{st.text}
+                </span>
+              )}
               {dl && (
-                <span style={{ ...S.cardDateInline, ...(dl.overdue ? S.cardDeadlineOver : {}) }}
-                  onPointerDown={stop} onClick={openPicker}>
+                <span style={{ ...S.cardDateInline, display: "inline-flex", alignItems: "center", gap: 5, ...(dl.overdue ? S.cardDeadlineOver : {}) }}
+                  onPointerDown={stop} onClick={openPicker} title="期限">
                   <input type="date" value={p.deadline || ""} style={S.cardDateHidden}
                     onClick={stop} onChange={(e) => { stop(e); onSetDeadline && onSetDeadline(p.id, e.target.value); }} />
-                  期限 {dl.text}
+                  <Flag size={13} strokeWidth={2.2} />{dl.text}
                 </span>
               )}
             </span>
@@ -1775,59 +1779,30 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
   );
 }
 
-// タスク行の右側チップ（状態切替＋日付クイック変更）。案件一覧・フィルタ表示で共通
-function TaskMetaChips({ t, onChangeKind, onChangeStart, onChangeDue }) {
-  const [dueOpen, setDueOpen] = useState(false);
+// タスクのメタ表示（状態アイコン＋日付）。表示専用：タップは行全体で詳細シートを開く
+function TaskMetaChips({ t }) {
   if (t.kind === "reply") return null;
   const judge = taskJudgeDate(t);
   const lab = judge ? dateLabelJP(judge) : null;
   const jn = judge ? daysUntil(judge) : null;
   const chipColor = jn === null ? C.ink3 : (jn < 0 ? "#FF6B6B" : C.ink2); // 赤は超過のみ
   const KIND_META = {
-    task:    { Icon: User,      color: C.ink3,    label: "自分でやる" },
-    waiting: { Icon: Hourglass, color: "#D9A23B", label: "相手待ち" },
-    payment: { Icon: Coins,     color: "#51CF66", label: "支払い待ち" },
+    task:    { Icon: User,      color: C.ink3 },
+    waiting: { Icon: Hourglass, color: "#D9A23B" },
+    payment: { Icon: Coins,     color: "#51CF66" },
   };
   const kindMeta = KIND_META[t.kind] || KIND_META.task;
-  const cycleKind = () => {
-    const order = ["task", "waiting", "payment"];
-    const next = order[(order.indexOf(t.kind === "reply" ? "task" : t.kind) + 1) % order.length];
-    onChangeKind && onChangeKind(next);
-  };
-  const dStrLocal = (off) => { const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + off); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; };
-  const quick = [
-    ["今日", dStrLocal(0)], ["明日", dStrLocal(1)], ["3日後", dStrLocal(3)], ["1週間後", dStrLocal(7)], ["なし", ""],
-  ];
-  const setSchedule = (val) => { onChangeStart ? onChangeStart(val) : (onChangeDue && onChangeDue(val)); };
   return (
-    <div style={S.dueWrap} onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
-      <button style={{ ...S.kindChip, borderColor: t.kind === "waiting" || t.kind === "payment" ? kindMeta.color + "55" : C.line }}
-        onClick={cycleKind} title={`状態：${kindMeta.label}（タップで切替）`}>
+    <div style={S.dueWrap}>
+      <span style={{ ...S.kindChip, borderColor: t.kind === "waiting" || t.kind === "payment" ? kindMeta.color + "55" : C.line }}>
         <kindMeta.Icon size={13} color={kindMeta.color} strokeWidth={2.3} />
-      </button>
-      <button style={{ ...S.dueChip, color: judge ? chipColor : C.ink3, borderColor: judge ? chipColor + "44" : C.line }}
-        onClick={() => setDueOpen((v) => !v)} title="いつやるかを変更">
+      </span>
+      <span style={{ ...S.dueChip, color: judge ? chipColor : C.ink3, borderColor: judge ? chipColor + "44" : C.line }}>
         <CalendarDays size={12} strokeWidth={2.3} />{lab ? lab.text : "日付"}
-      </button>
-      {dueOpen && (
-        <>
-          <div style={S.movePopScrim} onClick={() => setDueOpen(false)} />
-          <div style={S.duePop}>
-            {quick.map(([label, val]) => (
-              <button key={label} style={S.dueItem} onClick={() => { setSchedule(val); setDueOpen(false); }}>{label}</button>
-            ))}
-            <label style={S.dueDateRow}>
-              <span style={S.dueDateLabel}>日付指定</span>
-              <input type="date" style={S.dueDateInput} value={judge || ""}
-                onChange={(e) => { setSchedule(e.target.value); setDueOpen(false); }} />
-            </label>
-          </div>
-        </>
-      )}
+      </span>
     </div>
   );
 }
-
 function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging, dragActive, onStartDrag, onChangeDue, onChangeStart, onChangeKind }) {
   // 長押し（400ms）で並べ替えドラッグ開始
   const lpTimer = useRef(null);
@@ -1847,17 +1822,18 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
   return (
     <div data-tid={t.id} data-pid={t.project.id}
       style={{ ...S.tcard, ...(t.done ? S.tcardDone : {}), ...(dragging ? S.tcardDragging : {}), touchAction: dragActive ? "none" : "pan-y" }}
-      onPointerDown={tdown} onPointerMove={tmove} onPointerUp={tup} onPointerCancel={tup}>
-      <button style={S.checkBtn} onClick={() => onToggle(t.project.id, t.id)}>
+      onPointerDown={tdown} onPointerMove={tmove} onPointerUp={tup} onPointerCancel={tup}
+      onClick={(e) => {
+        if (e.target.closest && e.target.closest("button, input, a, label")) return;
+        if (t.project.id === INBOX_ID) { onEditTask ? onEditTask(t.project.id, t.id) : onOpen(t.project); return; }
+        if (t.kind === "reply") { onOpenTask ? onOpenTask(t.project, t.id) : onOpen(t.project); return; }
+        onEditTask ? onEditTask(t.project.id, t.id) : (onOpenTask ? onOpenTask(t.project, t.id) : onOpen(t.project));
+      }}>
+      <button style={S.checkBtn} onClick={(e) => { e.stopPropagation(); onToggle(t.project.id, t.id); }}>
         {t.done ? <CheckCircle2 size={18} color="#51CF66" strokeWidth={2.2} />
                 : <Circle size={18} color="#3A434F" strokeWidth={2.2} />}
       </button>
-      <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
-        onClick={() => {
-          if (t.project.id === INBOX_ID) { onEditTask ? onEditTask(t.project.id, t.id) : onOpen(t.project); return; }
-          if (t.kind === "reply") { onOpenTask ? onOpenTask(t.project, t.id) : onOpen(t.project); return; }
-          onEditTask ? onEditTask(t.project.id, t.id) : (onOpenTask ? onOpenTask(t.project, t.id) : onOpen(t.project));
-        }}>
+      <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }}>
         <div style={{ ...S.tcardTitle, ...(t.done ? S.trowDone : {}) }}>
           {t.kind === "reply" && <Reply size={13} color="#6B8AFF" strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
           {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
@@ -1869,7 +1845,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
             <span style={{ ...S.dueMini, color: "#6B8AFF" }}>本日中</span>
           </div>
         )}
-        <TaskMetaChips t={t} onChangeKind={onChangeKind} onChangeStart={onChangeStart} onChangeDue={onChangeDue} />
+        <TaskMetaChips t={t} />
       </div>
     </div>
   );
@@ -3395,7 +3371,7 @@ const F = {
   body: "'Noto Sans JP', system-ui, sans-serif",
 };
 const C = {
-  bg: "#0F1318", panel: "#181D25", panel2: "#212834",
+  bg: "#000000", panel: "#181D25", panel2: "#212834",
   ink: "#E8ECF2", ink2: "#C0C9D6", ink3: "#8B95A5",
   line: "#2A323D", accent: "#6B8AFF",
 };
@@ -3405,7 +3381,7 @@ const S = {
 
   header: {
     position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", gap: 9,
-    padding: "10px 14px", background: "rgba(15,19,24,0.97)",
+    padding: "10px 14px", background: "rgba(0,0,0,0.97)",
     borderBottom: `1px solid ${C.line}`, flexWrap: "nowrap",
   },
   brand: { display: "flex", alignItems: "center", gap: 10, marginRight: "auto", flexShrink: 0 },
@@ -3814,7 +3790,7 @@ const S = {
   laneList: { display: "flex", flexDirection: "column", gap: 8 },
   laneEmpty: { border: "1.5px dashed #333B46", borderRadius: 10, padding: "14px 8px", textAlign: "center", fontSize: 14.5, color: C.ink3, fontWeight: 500 },
 
-  tcard: { position: "relative", textAlign: "left", display: "flex", alignItems: "flex-start", gap: 10, background: "transparent", border: "none", borderRadius: 0, padding: "8px 0", cursor: "pointer", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" },
+  tcard: { position: "relative", textAlign: "left", display: "flex", cursor: "pointer", alignItems: "flex-start", gap: 10, background: "transparent", border: "none", borderRadius: 0, padding: "8px 0", cursor: "pointer", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" },
   tcardDone: { opacity: 0.62, cursor: "default" },
   tcardTitle: { fontSize: 18, fontFamily: F.disp, fontWeight: 700, lineHeight: 1.35, letterSpacing: 0.15, color: C.ink, wordBreak: "break-word" },
   tcardMeta: { display: "flex", alignItems: "center", gap: 7, marginTop: 6, flexWrap: "wrap" },
