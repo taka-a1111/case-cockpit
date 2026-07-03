@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-03s"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-03t"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -1046,10 +1046,10 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
   const startTaskDrag = (pid, tid, el, pointerId, title, sx, sy) => {
     try { el && el.setPointerCapture && pointerId != null && el.setPointerCapture(pointerId); } catch {}
     setDragTaskId(tid);
-    const ghost = makeDragGhost(title, sx || 0, sy || 0);
+    const ghost = makeRowGhost(el, sy || 0);
     const move = (ev) => {
       if (ev.cancelable) ev.preventDefault();
-      moveDragGhost(ghost, ev.clientX, ev.clientY);
+      moveRowGhost(ghost, ev.clientY);
       const elAt = document.elementFromPoint(ev.clientX, ev.clientY);
       if (!elAt) return;
       const row = elAt.closest && elAt.closest("[data-tid]");
@@ -1089,11 +1089,11 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
     try { el && el.setPointerCapture && pointerId != null && el.setPointerCapture(pointerId); } catch {}
     setSortMode("manual"); // 並べ替えたら手動順に切替（再ソートで戻らないように）
     setDragId(pid);
-    const src = projects.find((pp) => pp.id === pid);
-    const ghost = makeDragGhost(src ? src.company : "", sx || 0, sy || 0);
+    const srcP = projects.find((pp) => pp.id === pid);
+    const ghost = makeRowGhost(el, sy || 0, srcP ? srcP.company : "");
     const move = (ev) => {
       if (ev.cancelable) ev.preventDefault();
-      moveDragGhost(ghost, ev.clientX, ev.clientY);
+      moveRowGhost(ghost, ev.clientY);
       const x = ev.clientX, y = ev.clientY;
       const elAt = document.elementFromPoint(x, y);
       const card = elAt && elAt.closest && elAt.closest("[data-pid]");
@@ -1501,7 +1501,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
         <div style={S.cardTaskList}>
           {showTasks.map((t) => (
             <div key={t.id} data-tid={t.id} data-pid={p.id}
-              style={{ ...S.cardTaskRow, ...(taskDragId === t.id ? { opacity: 0.4 } : {}), touchAction: taskDragId ? "none" : "pan-y" }}
+              style={{ ...S.cardTaskRow, touchAction: taskDragId ? "none" : "pan-y" }}
               onPointerDown={(e) => tRowDown(e, t.id)} onPointerMove={tRowMove} onPointerUp={tRowUp} onPointerCancel={tRowUp}
               onClick={(e) => { stop(e); onEditTask && onEditTask(p.id, t.id, "title"); }}>
               <button style={S.cardTaskCheck} onPointerDown={stop}
@@ -1550,23 +1550,31 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
    タスクビュー（横タブ・横スワイプ切替・ポインタD&D）
    ============================================================ */
 // フィルタキーごとの件数（チップ・PCボード共用）
-// ドラッグ中に指へ追従するゴースト（Googleタスク風）
-function makeDragGhost(text, x, y) {
-  const g = document.createElement("div");
-  g.textContent = text || "（無題）";
+// ドラッグゴースト：行そのものを複製し、元の位置に重ねて縦方向だけ指に追従（Googleタスク風）
+function makeRowGhost(el, startY, textOverride) {
+  if (!el || !el.getBoundingClientRect) return null;
+  const r = el.getBoundingClientRect();
+  let g;
+  if (textOverride != null) {
+    g = document.createElement("div");
+    g.textContent = textOverride || "（無題）";
+    Object.assign(g.style, { fontWeight: "700", fontSize: "17px", color: "#E8ECF2", padding: "13px 15px",
+      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" });
+  } else {
+    g = el.cloneNode(true);
+    g.style.padding = "8px 10px";
+  }
   Object.assign(g.style, {
-    position: "fixed", left: "0px", top: "0px",
-    transform: `translate(${Math.round(x + 14)}px, ${Math.round(y - 26)}px)`,
-    zIndex: 9999, pointerEvents: "none",
-    background: "#212834", color: "#E8ECF2", border: "1px solid rgba(107,138,255,0.5)",
-    borderRadius: "10px", padding: "10px 14px", fontSize: "15px", fontWeight: "600",
-    maxWidth: "70vw", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-    boxShadow: "0 8px 24px rgba(0,0,0,0.55)",
+    position: "fixed", left: r.left + "px", top: r.top + "px", width: r.width + "px",
+    margin: "0", zIndex: "9999", pointerEvents: "none", boxSizing: "border-box",
+    background: "#181D25", border: "1px solid rgba(107,138,255,0.45)", borderRadius: "12px",
+    boxShadow: "0 10px 28px rgba(0,0,0,0.6)",
   });
+  g.dataset.gy = String(startY || 0);
   document.body.appendChild(g);
   return g;
 }
-function moveDragGhost(g, x, y) { if (g) g.style.transform = `translate(${Math.round(x + 14)}px, ${Math.round(y - 26)}px)`; }
+function moveRowGhost(g, y) { if (g) g.style.transform = `translateY(${Math.round(y - Number(g.dataset.gy || 0))}px)`; }
 function removeDragGhost(g) { if (g && g.parentNode) g.parentNode.removeChild(g); }
 
 function focusFilterCount(projects, key) {
@@ -1618,10 +1626,10 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
   const startTaskDrag = (pid, tid, el, pointerId, dragLane, title, sx, sy) => {
     try { el && el.setPointerCapture && pointerId != null && el.setPointerCapture(pointerId); } catch {}
     setDragTid(tid);
-    const ghost = makeDragGhost(title, sx || 0, sy || 0);
+    const ghost = makeRowGhost(el, sy || 0);
     const move = (ev) => {
       if (ev.cancelable) ev.preventDefault();
-      moveDragGhost(ghost, ev.clientX, ev.clientY);
+      moveRowGhost(ghost, ev.clientY);
       const elAt = document.elementFromPoint(ev.clientX, ev.clientY);
       const row = elAt && elAt.closest && elAt.closest("[data-tid]");
       if (row) {
@@ -1855,7 +1863,7 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
   return (
     <div data-tid={t.id} data-pid={t.project.id}
       onContextMenu={(e) => e.preventDefault()}
-      style={{ ...S.tcard, ...(t.done ? S.tcardDone : {}), ...(dragging ? S.tcardDragging : {}), touchAction: dragActive ? "none" : "pan-y" }}
+      style={{ ...S.tcard, ...(t.done ? S.tcardDone : {}), touchAction: dragActive ? "none" : "pan-y" }}
       onPointerDown={tdown} onPointerMove={tmove} onPointerUp={tup} onPointerCancel={tup}
       onClick={(e) => {
         if (e.target.closest && e.target.closest("button, input, a, label")) return;
