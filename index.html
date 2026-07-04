@@ -1798,6 +1798,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
       </div>
       )}
 
+      {!(singleLane && wide) && (
       <div style={S.laneBar}>
         {!singleLane && <span style={{ ...S.laneDot, background: activeMeta.color }} />}
         {!singleLane && <span style={S.laneBarTitle}>{activeMeta.label}</span>}
@@ -1806,6 +1807,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
           <Plus size={15} strokeWidth={2.6} /> 追加
         </button>
       </div>
+      )}
 
       {adding && (
         <AddTaskInline projects={projects}
