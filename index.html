@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-05k"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-05l"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -1444,14 +1444,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
   const statusTint = null; // カンバンの列でステータスが明示されているため、背景色分けは無効化
   const lpTimer = useRef(null);
   const downInfo = useRef(null);
-  const openTasks = p.tasks
-    .filter((t) => !t.done && t.kind !== "reply")
-    .sort((a, b) => {
-      const an = daysUntil(taskJudgeDate(a)), bn = daysUntil(taskJudgeDate(b));
-      if (an === null && bn === null) return 0;
-      if (an === null) return 1; if (bn === null) return -1;
-      return an - bn;
-    });
+  const openTasks = p.tasks.filter((t) => !t.done && t.kind !== "reply");
   const showTasks = openTasks;
   const moreTasks = 0;
   const stop = (e) => e.stopPropagation();
@@ -2207,8 +2200,35 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   const dismissAllDiff = () => { setPendingDiff([]); setParseMsg("反映をキャンセルしました。"); };
 
   const [justAddedId, setJustAddedId] = useState(null);
-  const [openTaskId, setOpenTaskId] = useState(null);
-  const addTask = () => { const id = uid(); set("tasks", [...d.tasks, { id, title: "", done: false, due: "", start: "", lane: "later", kind: "task", note: "", repeat: null, links: [] }]); setJustAddedId(id); setOpenTaskId(id); };
+  const [dragTaskId, setDragTaskId] = useState(null);
+  const addTask = () => { const id = uid(); set("tasks", [...d.tasks, { id, title: "", done: false, due: "", start: "", lane: "later", kind: "task", note: "", repeat: null, links: [] }]); setJustAddedId(id); };
+  const reorderTaskDraft = (id, overId) => setD((p) => {
+    const arr = p.tasks; const from = arr.findIndex((t) => t.id === id); const to = arr.findIndex((t) => t.id === overId);
+    if (from < 0 || to < 0 || from === to) return p;
+    const copy = arr.slice(); const [item] = copy.splice(from, 1); copy.splice(to, 0, item);
+    return { ...p, tasks: copy };
+  });
+  const startTaskReorder = (e, id) => {
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    setDragTaskId(id);
+    const move = (ev) => {
+      if (ev.cancelable) ev.preventDefault();
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const row = el && el.closest && el.closest("[data-tid]");
+      if (row) { const overId = row.getAttribute("data-tid"); if (overId && overId !== id) reorderTaskDraft(id, overId); }
+    };
+    const up = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.removeEventListener("touchmove", block);
+      setDragTaskId(null);
+    };
+    const block = (ev) => { if (ev.cancelable) ev.preventDefault(); };
+    document.addEventListener("touchmove", block, { passive: false });
+    document.addEventListener("pointermove", move, { passive: false });
+    document.addEventListener("pointerup", up);
+  };
   const setTask = (id, k, v) => set("tasks", d.tasks.map((t) => t.id === id ? { ...t, [k]: v } : t));
   const patchTask = (id, patch) => set("tasks", d.tasks.map((t) => t.id === id ? { ...t, ...patch } : t));
   const delTask = (id) => set("tasks", d.tasks.filter((t) => t.id !== id));
@@ -2443,42 +2463,21 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
           </div>
           <div style={S.taskEditList}>
             {d.tasks.filter((t) => !t.done).map((t) => (
-              openTaskId === t.id ? (
-              <div key={t.id} style={S.taskEditRow}>
-                <div style={S.taskEditTop}>
-                  <button style={S.checkBtn} onClick={() => setTask(t.id, "done", !t.done)}>
-                    {t.done ? <CheckCircle2 size={18} color="#51CF66" /> : <Circle size={18} color="#3A434F" />}
-                  </button>
-                  <AutoHeightTextarea style={{ ...S.taskInput, ...(t.done ? S.trowDone : {}) }} value={t.title}
-                    autoFocus={t.id === justAddedId}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); setOpenTaskId(null); } }}
-                    placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
-                  <button style={S.iconBtnSm} onClick={() => setOpenTaskId(null)} title="閉じる"><ChevronUp size={16} color="#8B95A5" /></button>
-                  <button style={S.iconBtnSm} onClick={() => { delTask(t.id); setOpenTaskId(null); }}><Trash2 size={14} color="#8B95A5" /></button>
-                </div>
-                <textarea style={S.taskNoteInput} value={t.note || ""} rows={1}
-                  placeholder="詳細・メモ" onChange={(e) => setTask(t.id, "note", e.target.value)} />
-                <NoteLinks text={t.note} indent={0} />
-                <div style={S.taskEditDates}>
-                  <Clock size={15} color={C.ink3} strokeWidth={2} style={{ flexShrink: 0 }} />
-                  <DateField value={t.start} placeholder="いつやる" onChange={(v) => setTask(t.id, "start", v)} />
-                  <span style={S.taskDateSep}>／</span>
-                  <DateField value={t.due} placeholder="期限" onChange={(v) => setTask(t.id, "due", v)} />
-                  <RepeatField value={t.repeat} onChange={(patch) => patchTask(t.id, patch)} />
-                </div>
-                <LinksField links={t.links} onChange={(v) => setTask(t.id, "links", v)} />
-              </div>
-              ) : (
-              <div key={t.id} style={S.taskSimpleRow}>
+              <div key={t.id} data-tid={t.id} style={{ ...S.taskSimpleRow, touchAction: dragTaskId ? "none" : "auto", opacity: dragTaskId === t.id ? 0.5 : 1 }}>
+                <button style={S.taskDragHandle} title="ドラッグで並べ替え"
+                  onPointerDown={(e) => startTaskReorder(e, t.id)}>
+                  <GripVertical size={16} color="#5A6472" strokeWidth={2} />
+                </button>
                 <button style={S.checkBtn} onClick={() => setTask(t.id, "done", !t.done)} title="タスクを完了">
-                  <Circle size={18} color={C.ink3} strokeWidth={2} />
+                  <Circle size={18} color="#3A434F" strokeWidth={2} />
                 </button>
-                <button style={S.taskSimpleTitle} onClick={() => setOpenTaskId(t.id)}>
-                  {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-2px" }} />}
-                  {t.title || "（無題）"}
-                </button>
+                <AutoHeightTextarea style={{ ...S.taskInput, background: "transparent", border: "none", padding: "8px 0", fontSize: 16.5 }} value={t.title}
+                  autoFocus={t.id === justAddedId}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); } }}
+                  placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
+                {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ flexShrink: 0 }} />}
+                <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#8B95A5" /></button>
               </div>
-              )
             ))}
             <button style={S.taskAddRow} onClick={addTask}>
               <Plus size={17} strokeWidth={2.6} />タスクを追加
@@ -3837,7 +3836,7 @@ const S = {
   cardTaskEditDate: { width: "100%", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 8px", fontSize: 14, color: C.ink2 },
   cardTaskEditDone: { border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "9px 16px", fontSize: 14, fontWeight: 700, flexShrink: 0 },
   cardTaskDot: { width: 7, height: 7, borderRadius: "50%", border: `1.5px solid ${C.ink3}`, flexShrink: 0 },
-  cardTaskTitle: { fontSize: 18, color: C.ink, lineHeight: 1.35, wordBreak: "break-word", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
+  cardTaskTitle: { fontSize: 19, color: C.ink, lineHeight: 1.35, wordBreak: "break-word", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
   cardTaskDate: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: C.ink2 },
   cardTaskOver: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: "#FF8A8A", background: "rgba(255,107,107,0.13)", padding: "2px 9px", borderRadius: 7 },
   cardTaskDue: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0 },
@@ -3908,7 +3907,8 @@ const S = {
   subtaskHeadLabel: { flex: 1, fontSize: 16, color: C.ink2, fontWeight: 600 },
   subtaskAddBtn: { display: "inline-flex", alignItems: "center", gap: 4, border: "none", background: "transparent", color: C.accent, fontSize: 14.5, fontWeight: 700, padding: "2px 4px" },
   taskAddRow: { display: "flex", alignItems: "center", gap: 8, border: `1px dashed ${C.line}`, background: "transparent", color: C.accent, fontSize: 15, fontWeight: 700, padding: "11px 12px", borderRadius: 10, width: "100%", justifyContent: "center" },
-  taskSimpleRow: { display: "flex", alignItems: "center", gap: 12 },
+  taskSimpleRow: { display: "flex", alignItems: "center", gap: 8 },
+  taskDragHandle: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "grab", touchAction: "none" },
   taskSimpleTitle: { flex: 1, minWidth: 0, textAlign: "left", border: "none", background: "transparent", color: C.ink, fontSize: 16.5, fontWeight: 500, padding: "8px 0", cursor: "pointer", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
 
   field: { display: "flex", flexDirection: "column", gap: 6 },
@@ -4033,7 +4033,7 @@ const S = {
   kindChip: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, background: "transparent", padding: 0, flexShrink: 0 },
   kindSegRow: { display: "flex", gap: 6, flex: 1, minWidth: 0 },
   kindSegBtn: { display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, background: "transparent", color: C.ink3, borderRadius: 8, padding: "6px 10px", fontSize: 12.5, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
-  dueChip: { display: "flex", alignItems: "center", gap: 5, background: "transparent", fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
+  dueChip: { display: "flex", alignItems: "center", gap: 5, background: "transparent", fontSize: 19, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
   duePop: { position: "absolute", top: 30, right: 0, zIndex: 31, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", padding: 6, display: "flex", flexDirection: "column", gap: 2, minWidth: 150 },
   dueItem: { border: "none", background: "transparent", borderRadius: 7, padding: "8px 10px", fontSize: 14, fontWeight: 600, color: C.ink, textAlign: "left" },
   dueDateRow: { display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderTop: `1px solid ${C.line}`, marginTop: 2 },
