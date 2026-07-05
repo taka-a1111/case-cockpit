@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-05n"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-05p"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -1022,7 +1022,6 @@ export default function App() {
           <SubtaskSheet project={p} task={t} focus={editTask.focus}
             onClose={goBack}
             onUpdate={(patch) => updateTask(editTask.pid, editTask.tid, patch)}
-            onStatusChange={(s) => setProjectStatus(editTask.pid, s)}
             onToggle={() => { toggleTask(editTask.pid, editTask.tid); goBack(); }}
             onDelete={() => { removeTaskFromProject(editTask.pid, editTask.tid); goBack(); }} />
         );
@@ -1873,7 +1872,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
               <span style={{ ...S.waitRowIcon, color: lane === "payment" ? "#51CF66" : "#D9A23B" }}>{lane === "payment" ? "💰" : "⏳"}</span>
             )}
             <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-              <div style={S.tcardTitle}>{g.startRow ? "本日着手" : (lane === "payment" ? "入金待ち" : "先方の返信・対応待ち")}</div>
+              <div style={S.tcardTitle}>{g.startRow ? "今日" : (lane === "payment" ? "入金待ち" : "先方の返信・対応待ち")}</div>
               {g.project.deadline && <div style={S.tcardMeta}><span style={S.tcardCompany}>納期 {dateLabelJP(g.project.deadline).text}</span></div>}
             </div>
           </button>
@@ -2488,16 +2487,14 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                   完了 ({d.tasks.filter((t) => t.done && !isArchivedTask(t)).length}件)
                 </button>
                 {!hideDoneTasks && d.tasks.filter((t) => t.done && !isArchivedTask(t)).map((t) => (
-                  <div key={t.id} style={{ ...S.taskEditRow, opacity: 0.65 }}>
-                    <div style={S.taskEditTop}>
-                      <button style={S.checkBtn} onClick={() => setTask(t.id, "done", !t.done)}>
-                        <CheckCircle2 size={18} color="#51CF66" />
-                      </button>
-                      <AutoHeightTextarea style={{ ...S.taskInput, ...S.trowDone }} value={t.title}
-                        onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); closeWithSave(); } }}
-                        placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
-                      <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#8B95A5" /></button>
-                    </div>
+                  <div key={t.id} style={{ ...S.taskSimpleRow, opacity: 0.65 }}>
+                    <button style={S.checkBtn} onClick={() => setTask(t.id, "done", !t.done)} title="未完了に戻す">
+                      <CheckCircle2 size={18} color="#51CF66" />
+                    </button>
+                    <AutoHeightTextarea style={{ ...S.taskInput, ...S.trowDone, background: "transparent", border: "none", padding: "8px 0", fontSize: 16.5 }} value={t.title}
+                      onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); } }}
+                      placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
+                    <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#8B95A5" /></button>
                   </div>
                 ))}
               </>
@@ -2822,7 +2819,7 @@ function useWideScreen(bp = 820) {
   useEffect(() => { const on = () => setW(get()); window.addEventListener("resize", on); return () => window.removeEventListener("resize", on); }, []);
   return w;
 }
-function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDelete, onStatusChange }) {
+function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDelete }) {
   const [confirm, setConfirm] = useState(false);
   const wide = useWideScreen();
   return (
@@ -3800,7 +3797,6 @@ const S = {
   cardCompany: { fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, lineHeight: 1.3, color: C.ink },
   cardWork: { display: "none" },
   cardMetaLine: { display: "flex", alignItems: "baseline", gap: 10 },
-  cardDeadlineSub: { position: "relative", fontSize: 14.5, color: C.ink2, fontWeight: 600, cursor: "pointer" },
   cardDeadlineOver: { color: "#FF8A8A" },
   cardDeadlineEmpty: { color: C.ink3 },
   cardDateHidden: { position: "absolute", left: 0, bottom: 0, width: 1, height: 1, opacity: 0, pointerEvents: "none" },
@@ -3825,30 +3821,12 @@ const S = {
   calModalQuick: { display: "flex", gap: 8, marginTop: 12, padding: "0 4px" },
   calModalQuickBtn: { flex: 1, border: `1px solid ${C.line}`, background: "transparent", color: C.ink, fontSize: 14.5, fontWeight: 700, padding: "9px 6px", borderRadius: 10, cursor: "pointer" },
   calModalClear: { border: "none", background: "transparent", color: C.ink3, fontSize: 14.5, fontWeight: 600, padding: "8px 6px" },
-  cardMetaRow: { display: "none" },
-  cardReward: { fontFamily: F.disp, fontWeight: 800, fontSize: 16, fontVariantNumeric: "tabular-nums", letterSpacing: 0.3, color: C.ink2, marginLeft: "auto" },
-  cardDue: { display: "flex", alignItems: "center", gap: 4, fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap" },
-  cardDueNone: { display: "none" },
   cardTaskList: { display: "flex", flexDirection: "column", gap: 9, marginTop: 10, paddingLeft: 30 },
   cardTaskRow: { display: "flex", alignItems: "flex-start", gap: 12, cursor: "pointer" },
   cardTaskCheck: { display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent", padding: 2, flexShrink: 0, cursor: "pointer" },
-  cardTaskEdit: { display: "flex", flexDirection: "column", gap: 8, padding: "10px 11px", background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 10 },
-  cardTaskEditInput: { width: "100%", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 10px", fontSize: 15, color: C.ink },
-  cardTaskEditDates: { display: "flex", alignItems: "flex-end", gap: 8 },
-  cardTaskEditField: { flex: 1, display: "flex", flexDirection: "column", gap: 3, minWidth: 0 },
-  cardTaskEditLabel: { fontSize: 12, fontWeight: 700, color: C.ink3 },
-  cardTaskEditDate: { width: "100%", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 8px", fontSize: 14, color: C.ink2 },
-  cardTaskEditDone: { border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "9px 16px", fontSize: 14, fontWeight: 700, flexShrink: 0 },
-  cardTaskDot: { width: 7, height: 7, borderRadius: "50%", border: `1.5px solid ${C.ink3}`, flexShrink: 0 },
   cardTaskTitle: { fontSize: 19, color: C.ink, lineHeight: 1.35, wordBreak: "break-word", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
-  cardTaskDate: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: C.ink2 },
-  cardTaskOver: { fontSize: 15.5, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0, color: "#FF8A8A", background: "rgba(255,107,107,0.13)", padding: "2px 9px", borderRadius: 7 },
-  cardTaskDue: { fontSize: 14, fontWeight: 700, fontFamily: F.disp, whiteSpace: "nowrap", flexShrink: 0 },
   cardTaskMore: { fontSize: 14, color: C.ink3, fontWeight: 600, paddingLeft: 17 },
   cardAddRow: { display: "flex", alignItems: "center", gap: 7 },
-  cardAddInput: { flex: 1, minWidth: 0, background: C.panel2, border: `1px solid ${C.accent}`, borderRadius: 8, padding: "8px 10px", fontSize: 14.5, color: C.ink },
-  cardAddDone: { border: "none", background: C.accent, color: "#fff", borderRadius: 8, padding: "8px 14px", fontSize: 14, fontWeight: 700, flexShrink: 0 },
-  cardAddCancel: { border: "none", background: "transparent", color: C.ink3, fontSize: 18, fontWeight: 700, padding: "0 4px", flexShrink: 0 },
   cardLinkMini: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, margin: "-4px 0", borderRadius: 8, textDecoration: "none" },
   cardFoot: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, paddingTop: 13, marginTop: 14, borderTop: `1px solid ${C.line}` },
   cardAddTaskBtn: { display: "inline-flex", alignItems: "center", gap: 5, border: `1px solid ${C.line}`, background: C.panel2, color: C.ink2, borderRadius: 9, padding: "7px 12px", fontSize: 13.5, fontWeight: 700 },
@@ -3923,13 +3901,9 @@ const S = {
   addTaskBtn: { display: "flex", alignItems: "center", gap: 4, border: `1px solid ${C.line}`, background: C.panel, borderRadius: 8, padding: "5px 9px", fontSize: 14, fontWeight: 700, color: C.ink2 },
   taskEditList: { display: "flex", flexDirection: "column", gap: 13 },
   taskEmpty: { fontSize: 14, color: C.ink3, padding: "4px 2px" },
-  taskEditRow: { display: "flex", flexDirection: "column", gap: 7, padding: "10px 11px", background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 11 },
-  taskEditTop: { display: "flex", alignItems: "center", gap: 7 },
-  taskEditDates: { display: "flex", alignItems: "center", gap: 8, paddingLeft: 28 },
   taskDateField: { flex: 1, display: "flex", flexDirection: "column", gap: 3 },
   taskDateLabel: { fontSize: 13, fontWeight: 700, color: C.ink3 },
   taskInput: { flex: 1, minWidth: 0, background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "8px 10px", fontSize: 16 },
-  taskNoteInput: { width: "100%", marginLeft: 28, marginTop: 4, boxSizing: "border-box", maxWidth: "calc(100% - 28px)", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "6px 9px", fontSize: 13.5, color: C.ink2, resize: "vertical", fontFamily: "inherit", lineHeight: 1.5, outline: "none" },
   repeatRow: { display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 },
   repeatAdd: { border: "none", background: "transparent", color: C.ink3, fontSize: 14, fontWeight: 600, padding: "2px 0" },
   repeatLabel: { fontSize: 14, color: C.ink2, fontWeight: 600 },
