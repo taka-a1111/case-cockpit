@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-05f"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-05g"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -268,7 +268,7 @@ const WD_JP = ["日", "月", "火", "水", "木", "金", "土"];
 function dateLabelJP(dateStr) {
   const n = daysUntil(dateStr);
   if (n === null) return null;
-  if (n === 0) return { text: "今日", overdue: false };
+  if (n === 0) return { text: "今日", overdue: false, today: true };
   if (n === 1) return { text: "明日", overdue: false };
   if (n < 0) return { text: `${-n}日前`, overdue: true };
   const parts = String(dateStr).split("-").map(Number);
@@ -1494,7 +1494,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
           {!dragActive && (st || dl) && (
             <span style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
               {st && (
-                <span style={{ ...S.cardDateInline, display: "inline-flex", alignItems: "center", gap: 5 }} title="いつやる">
+                <span style={{ ...S.cardDateInline, display: "inline-flex", alignItems: "center", gap: 5, ...(st.today ? { color: C.accent, fontWeight: 700 } : {}) }} title="いつやる">
                   <CalendarDays size={13} strokeWidth={2.2} />{st.text}
                 </span>
               )}
@@ -1982,7 +1982,7 @@ function TaskMetaChips({ t }) {
   const chipColor = jn === null ? C.ink3 : (jn < 0 ? "#FF6B6B" : C.ink2); // 赤は超過のみ
   return (
     <div style={S.dueWrap}>
-      <span style={{ ...S.dueChip, color: judge ? chipColor : C.ink3 }}>
+      <span style={{ ...S.dueChip, color: judge ? chipColor : C.ink3, ...(lab && lab.today ? { color: C.accent, fontWeight: 700 } : {}) }}>
         <CalendarDays size={12} strokeWidth={2.3} />{lab ? lab.text : "日付"}
       </span>
     </div>
