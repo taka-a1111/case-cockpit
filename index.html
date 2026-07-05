@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-05h"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-05i"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -2009,7 +2009,7 @@ function TaskMetaChips({ t }) {
   return (
     <div style={S.dueWrap}>
       <span style={{ ...S.dueChip, color: judge ? chipColor : C.ink3, ...(lab && lab.today ? { color: C.accent, fontWeight: 700 } : {}) }}>
-        <CalendarDays size={12} strokeWidth={2.3} />{lab ? lab.text : "日付"}
+        <CalendarDays size={12} strokeWidth={2.3} />{lab ? lab.text : "—"}
       </span>
     </div>
   );
@@ -2416,12 +2416,9 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
 
           <div style={S.infoRow}>
             <Clock size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
-            <DateField value={d.start} placeholder="いつやるを追加" onChange={(v) => set("start", v)} />
-          </div>
-
-          <div style={S.infoRow}>
-            <CalendarDays size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
-            <DateField value={d.deadline} placeholder="期限を追加" onChange={(v) => set("deadline", v)} />
+            <DateField value={d.start} placeholder="いつやる" onChange={(v) => set("start", v)} />
+            <span style={S.taskDateSep}>／</span>
+            <DateField value={d.deadline} placeholder="期限" onChange={(v) => set("deadline", v)} />
           </div>
 
           <div style={S.infoRow}>
@@ -2876,15 +2873,6 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
                   );
                 })}
               </div>
-            </div>
-          )}
-          {project.id !== INBOX_ID && onStatusChange && (
-            <div style={S.infoRow}>
-              <Briefcase size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
-              <select style={S.infoSelect} value={project.status || "進行中"}
-                onChange={(e) => onStatusChange(e.target.value)}>
-                {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
             </div>
           )}
         </div>
