@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-06b"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-06c"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -1506,7 +1506,10 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
             : <Circle size={18} color={C.ink3} strokeWidth={2} />}
         </button>
         <span style={S.cardCompanyWrap}>
-          <span style={{ ...S.cardCompany, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{p.company || "（無題）"}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+            <span style={{ ...S.cardCompany, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{p.company || "（無題）"}</span>
+            <StatusIcon status={p.status} />
+          </span>
           {!dragActive && (st || dl) && (
             <span style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
               {st && (
@@ -1550,6 +1553,8 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
                 <span style={S.cardTaskTitle}>
                   {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-2px" }} />}
                   {t.title || "（無題）"}
+                  {t.kind === "waiting" && <Hourglass size={13} color="#D9A23B" strokeWidth={2.4} style={{ marginLeft: 6, verticalAlign: "-2px" }} />}
+                  {t.kind === "payment" && <Coins size={13} color="#51CF66" strokeWidth={2.4} style={{ marginLeft: 6, verticalAlign: "-2px" }} />}
                 </span>
                 <TaskMetaChips t={t} />
               </div>
@@ -1956,6 +1961,13 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
   );
 }
 
+// ステータスアイコン（名前の右に表示）。進行中は何も出さない。
+function StatusIcon({ status, size = 14 }) {
+  if (status === "相手待ち") return <Hourglass size={size} color="#D9A23B" strokeWidth={2.4} style={{ flexShrink: 0 }} />;
+  if (status === "支払い待ち") return <Coins size={size} color="#51CF66" strokeWidth={2.4} style={{ flexShrink: 0 }} />;
+  return null;
+}
+
 // タスクのメタ表示（状態アイコン＋日付）。表示専用：タップは行全体で詳細シートを開く
 function TaskMetaChips({ t }) {
   if (t.kind === "reply") return null;
@@ -2007,6 +2019,8 @@ function TaskCard({ t, lane, onToggle, onOpen, onOpenTask, onEditTask, dragging,
           {t.kind === "reply" && <Reply size={13} color="#6B8AFF" strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
           {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ marginRight: 5, verticalAlign: "-1px" }} />}
           {t.title || "（無題）"}
+          {t.kind === "waiting" && <Hourglass size={13} color="#D9A23B" strokeWidth={2.4} style={{ marginLeft: 6, verticalAlign: "-1px" }} />}
+          {t.kind === "payment" && <Coins size={13} color="#51CF66" strokeWidth={2.4} style={{ marginLeft: 6, verticalAlign: "-1px" }} />}
         </div>
         {t.kind === "reply" && !t.done && (
           <div style={S.tcardMeta}>
