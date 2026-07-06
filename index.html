@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-06a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-06b"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -127,8 +127,9 @@ const STATUSES = ["進行中", "相手待ち", "支払い待ち", "完了"];
 const REPLIES = ["なし", "要返信", "返信済み", "相手待ち"];
 
 const TASK_LANES = [
-  { key: "today",   label: "今日",       color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
-  { key: "later",   label: "明日以降",   color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
+  { key: "today",    label: "今日",       color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
+  { key: "tomorrow", label: "明日",       color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
+  { key: "later",    label: "明後日以降", color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
   { key: "waiting", label: "相手待ち",   color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
   { key: "payment", label: "支払い待ち", color: "#6B8AFF", tint: "rgba(107,138,255,0.14)" },
 ];
@@ -143,8 +144,9 @@ const FOCUS_STATUSES = [
 // 案件一覧のフィルタチップ（すべて＋タスクレーン）
 const FOCUS_FILTERS = [
   { key: "all",     label: "すべて" },
-  { key: "today",   label: "今日" },
-  { key: "later",   label: "明日以降" },
+  { key: "today",    label: "今日" },
+  { key: "tomorrow", label: "明日" },
+  { key: "later",    label: "明後日以降" },
   { key: "waiting", label: "相手待ち" },
   { key: "payment", label: "支払い待ち" },
 ];
@@ -300,14 +302,25 @@ const replyTasksOf = (p) => (p.tasks || []).filter((t) => t.kind === "reply" && 
 // タスクの判定用の日付：いつやるか（start／実施日）を優先、なければ期限（due）
 const taskJudgeDate = (t) => t.start || t.due || "";
 // タスクがToDoのどのレーンに入るか：タスクのkind（waiting/payment）が最優先、
-// それ以外は日付で今日/明日以降。タスクなし案件は案件ステータスでプレースホルダー表示。
+// 振り分け：案件ステータス優先 → タスクのkind → 日付（今日/明日/明後日以降）
 function laneOf(project, task) {
   if (!project) return "later";
   if (project.status === "完了") return null;
+  // 案件ステータス最優先（タスクの状態より案件を優先）
+  if (project.status === "相手待ち") return "waiting";
+  if (project.status === "支払い待ち") return "payment";
+  // タスク単体の相手待ち/支払い待ち
   if (task.kind === "waiting") return "waiting";
   if (task.kind === "payment") return "payment";
+  // 進行中：いつやる（なければ期限）で 今日/明日/明後日以降。超過は今日、日付なしは明後日以降。
   const j = taskJudgeDate(task);
-  if (j) { const n = daysUntil(j); if (n !== null && n <= 0) return "today"; }
+  if (j) {
+    const n = daysUntil(j);
+    if (n !== null) {
+      if (n <= 0) return "today";
+      if (n === 1) return "tomorrow";
+    }
+  }
   return "later";
 }
 // 完了から30日経過したタスクはアーカイブ（一覧に出さない。データは残る）
@@ -362,7 +375,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("focus");
   const [navStack, setNavStack] = useState([]); // 画面遷移の履歴（戻る用）
-  const [focusFilter, setFocusFilter] = useState("all"); // 案件一覧のフィルタ（すべて/今日/明日以降/相手待ち/支払い待ち）
+  const [focusFilter, setFocusFilter] = useState("all"); // 案件一覧のフィルタ（すべて/今日/明日/明後日以降/相手待ち/支払い待ち）
   // ===== 全体検索（Ctrl+K / ヘッダ🔍） =====
   const [showSearch, setShowSearch] = useState(false);
   const [recentIds, setRecentIds] = useState([]);
@@ -818,7 +831,7 @@ export default function App() {
       persist(projects.map((p) => p.id !== pid ? p : { ...p, status }));
       return;
     }
-    const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + (lane === "today" ? 0 : 1));
+    const x = new Date(); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() + (lane === "today" ? 0 : lane === "tomorrow" ? 1 : 2));
     const start = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, status: (p.status === "相手待ち" || p.status === "支払い待ち") ? "進行中" : p.status,
@@ -833,10 +846,13 @@ export default function App() {
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => t.id === tid ? { ...t, start } : t),
     }));
-  const addTaskToLane = (pid, lane, title) =>
+  const addTaskToLane = (pid, lane, title) => {
+    const start = lane === "today" ? dStr(0) : lane === "tomorrow" ? dStr(1) : "";
+    const kind = lane === "waiting" ? "waiting" : lane === "payment" ? "payment" : "task";
     persist(projects.map((p) => p.id !== pid ? p : {
-      ...p, tasks: [...p.tasks, { id: uid(), title, done: false, due: "", start: "", lane, kind: "task", note: "", repeat: null, links: [] }],
+      ...p, tasks: [...p.tasks, { id: uid(), title, done: false, due: "", start, lane, kind, note: "", repeat: null, links: [] }],
     }));
+  };
   const setDeadline = (pid, deadline) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, deadline }));
   // ドラッグでタスクを別案件カードへ移動（末尾に追加）
@@ -1286,19 +1302,25 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
           {cardList.length > 0 && (
             <div style={S.grid}>
               {(() => {
-                // PCの「すべて」は 今日/明日以降/相手待ち/支払い待ち を色バーで区切る。スマホは従来通り（相手待ち/支払い待ちのみバー）
+                // PCの「すべて」は 今日/明日/明後日以降/相手待ち/支払い待ち を色バーで区切る。スマホは従来通り（相手待ち/支払い待ちのみバー）
                 const openT = (p) => (p.tasks || []).filter((t) => !t.done && !isArchivedTask(t));
-                const isTodayP = (p) => {
-                  const ts = openT(p);
-                  if (ts.some((t) => laneOf(p, t) === "today")) return true;
-                  if (ts.length === 0) { const n = daysUntil(p.start); if (n !== null && n <= 0) return true; }
-                  return false;
+                const laneP = (p) => {
+                  const lanes = openT(p).map((t) => laneOf(p, t));
+                  if (lanes.includes("today")) return "today";
+                  if (lanes.includes("tomorrow")) return "tomorrow";
+                  if (lanes.length === 0) {
+                    const n = daysUntil(p.start);
+                    if (n !== null && n <= 0) return "today";
+                    if (n === 1) return "tomorrow";
+                  }
+                  return "later";
                 };
                 const prog = cardList.filter((p) => p.status === "進行中");
                 const groups = wide
                   ? [
-                      { key: "today",   label: "今日",       color: "#6B8AFF", items: prog.filter(isTodayP), bar: true },
-                      { key: "later",   label: "明日以降",   color: "#9AA4B2", items: prog.filter((p) => !isTodayP(p)), bar: true },
+                      { key: "today",    label: "今日",       color: "#6B8AFF", items: prog.filter((p) => laneP(p) === "today"), bar: true },
+                      { key: "tomorrow", label: "明日",       color: "#9AA4B2", items: prog.filter((p) => laneP(p) === "tomorrow"), bar: true },
+                      { key: "later",    label: "明後日以降", color: "#9AA4B2", items: prog.filter((p) => laneP(p) === "later"), bar: true },
                       { key: "waiting", label: "相手待ち",   color: "#D9A23B", items: cardList.filter((p) => p.status === "相手待ち"), bar: true },
                       { key: "payment", label: "支払い待ち", color: "#51CF66", items: cardList.filter((p) => p.status === "支払い待ち"), bar: true },
                     ]
@@ -4031,7 +4053,7 @@ const S = {
   calBar: { display: "flex", alignItems: "center", gap: 10 },
   calBlock: { display: "flex", flexDirection: "column", gap: 10 },
   kanTop: { display: "flex", justifyContent: "flex-end" },
-  kanban: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, alignItems: "start" },
+  kanban: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, alignItems: "start" },
   kanWrap: { display: "flex", flexDirection: "column", gap: 22, width: "100%" },
   kanbanCol: { background: "rgba(255,255,255,0.015)", border: `1px solid ${C.line}`, borderRadius: 14, padding: 10, display: "flex", flexDirection: "column", gap: 10, minWidth: 0 },
   kanColHead: { display: "flex", alignItems: "center", gap: 7, padding: "2px 2px 0" },
