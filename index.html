@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-05r"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-06a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -1162,7 +1162,6 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
 
   return (
     <div style={S.colWrap}>
-      {wide && <InboxPanel />}
       <div style={{ display: "contents" }}>
       {!wide && (
       <div style={S.kpiRow}>
@@ -1489,7 +1488,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
           {!dragActive && (st || dl) && (
             <span style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
               {st && (
-                <span style={{ ...S.cardDateInline, display: "inline-flex", alignItems: "center", gap: 5, ...(st.today ? { color: C.accent, fontWeight: 700 } : {}) }} title="いつやる">
+                <span style={{ ...S.cardDateInline, display: "inline-flex", alignItems: "center", gap: 5 }} title="いつやる">
                   <CalendarDays size={13} strokeWidth={2.2} />{st.text}
                 </span>
               )}
@@ -1583,24 +1582,8 @@ function removeDragGhost(g) { if (g && g.parentNode) g.parentNode.removeChild(g)
 
 function focusFilterCount(projects, key) {
   if (key === "all") return projects.filter((p) => p.id !== INBOX_ID && p.status !== "完了").length;
-  if (key === "waiting" || key === "payment") {
-    const st = key === "waiting" ? "相手待ち" : "支払い待ち";
-    let c = 0;
-    projects.forEach((p) => {
-      if (p.id === INBOX_ID || p.status !== st) return;
-      const n = (p.tasks || []).filter((t) => !t.done).length;
-      c += n > 0 ? n : 1;
-    });
-    return c;
-  }
   let c = 0;
   projects.forEach((p) => (p.tasks || []).forEach((t) => { if (!t.done && laneOf(p, t) === key) c++; }));
-  if (key === "today") projects.forEach((p) => {
-    if (p.id === INBOX_ID || p.status === "完了") return;
-    if ((p.tasks || []).some((t) => !t.done)) return;
-    const n = daysUntil(p.start);
-    if (n !== null && n <= 0) c++;
-  });
   return c;
 }
 // 案件一覧上部のフィルタチップ（件数付き）
@@ -1812,22 +1795,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
   projects.forEach((p) => p.tasks.forEach((t) => all.push({ ...t, project: p, _lane: laneOf(p, t) })));
   const laneStatusOf = (lane) => lane === "waiting" ? "相手待ち" : lane === "payment" ? "支払い待ち" : null;
   const openTasksOf = (p) => (p.tasks || []).filter((t) => !t.done);
-  const countOf = (lane) => {
-    const st = laneStatusOf(lane);
-    if (!st) {
-      let c = all.filter((t) => t._lane === lane && !t.done).length;
-      if (lane === "today") projects.forEach((p) => {
-        if (p.id === INBOX_ID || p.status === "完了") return;
-        if (openTasksOf(p).length > 0) return;
-        const n = daysUntil(p.start);
-        if (n !== null && n <= 0) c++;
-      });
-      return c;
-    }
-    let c = 0;
-    projects.forEach((p) => { if (p.id !== INBOX_ID && p.status === st) { const n = openTasksOf(p).length; c += n > 0 ? n : 1; } });
-    return c;
-  };
+  const countOf = (lane) => all.filter((t) => t._lane === lane && !t.done).length;
   const laneTasks = (lane, doneOnly) => all
     .filter((t) => t._lane === lane)
     .filter((t) => doneOnly ? (t.done && !isArchivedTask(t)) : !t.done)
@@ -1841,17 +1809,6 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
       if (!gmap.has(t.project.id)) { const g = { project: t.project, tasks: [] }; gmap.set(t.project.id, g); groups.push(g); }
       gmap.get(t.project.id).tasks.push(t);
     });
-    if (!doneOnly) {
-      const st = laneStatusOf(lane);
-      if (st) projects.forEach((p) => { if (p.id === INBOX_ID || p.status !== st || gmap.has(p.id)) return; groups.push({ project: p, tasks: [], projectOnly: true }); });
-      // 今日レーン：着手日（いつやる）が今日以前でタスクを持たない案件を案件行として出す
-      if (lane === "today") projects.forEach((p) => {
-        if (p.id === INBOX_ID || p.status === "完了" || gmap.has(p.id)) return;
-        if (openTasksOf(p).length > 0) return; // タスクがあればそちらで表示
-        const n = daysUntil(p.start);
-        if (n !== null && n <= 0) groups.push({ project: p, tasks: [], projectOnly: true, startRow: true });
-      });
-    }
     return groups;
   };
   const doneCountLane = (lane) => all.filter((t) => t._lane === lane && t.done && !isArchivedTask(t)).length;
@@ -1868,23 +1825,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
         <span style={S.taskGroupName}>{g.project.company}</span>
       </button>
       <div style={S.taskGroupTasks}>
-        {g.projectOnly ? (
-          <button style={S.tcard} onClick={() => onOpen(g.project)}>
-            {!g.startRow && (
-              <span style={{ ...S.waitRowIcon, color: lane === "payment" ? "#51CF66" : "#D9A23B" }}>{lane === "payment" ? "💰" : "⏳"}</span>
-            )}
-            <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-              {g.startRow ? (
-                <div style={{ ...S.dueChip, color: C.accent }}>
-                  <CalendarDays size={12} strokeWidth={2.3} />今日
-                </div>
-              ) : (
-                <div style={S.tcardTitle}>{lane === "payment" ? "入金待ち" : "先方の返信・対応待ち"}</div>
-              )}
-              {g.project.deadline && <div style={S.tcardMeta}><span style={S.tcardCompany}>納期 {dateLabelJP(g.project.deadline).text}</span></div>}
-            </div>
-          </button>
-        ) : g.tasks.map((t) => (
+        {g.tasks.map((t) => (
           <TaskCard key={t.id} t={t} lane={lane}
             onToggle={onToggle} onOpen={onOpen} onOpenTask={onOpenTask} onEditTask={onEditTask}
             dragging={dragTid === t.id} dragActive={dragTid !== null}
@@ -1945,7 +1886,6 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
   const hasAny = groups.length > 0;
   return (
     <div style={S.colWrap}>
-      {activeLane === "today" && <InboxPanel />}
       {!singleLane && (
       <div style={S.taskTabs}>
         {TASK_LANES.map((L) => {
@@ -2003,7 +1943,7 @@ function TaskMetaChips({ t }) {
   const chipColor = jn === null ? C.ink3 : (jn < 0 ? "#FF6B6B" : C.ink2); // 赤は超過のみ
   return (
     <div style={S.dueWrap}>
-      <span style={{ ...S.dueChip, color: judge ? chipColor : C.ink3, ...(lab && lab.today ? { color: C.accent, fontWeight: 700 } : {}) }}>
+      <span style={{ ...S.dueChip, color: judge ? chipColor : C.ink3 }}>
         <CalendarDays size={12} strokeWidth={2.3} />{lab ? lab.text : "—"}
       </span>
     </div>
