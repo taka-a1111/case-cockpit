@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-07d"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-07g"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -302,20 +302,29 @@ const replyTasksOf = (p) => (p.tasks || []).filter((t) => t.kind === "reply" && 
 // タスクの判定用の日付：いつやるか（start／実施日）を優先、なければ期限（due）
 const taskJudgeDate = (t) => t.start || t.due || "";
 // タスクがToDoのどのレーンに入るか：タスクのkind（waiting/payment）が最優先、
-// 振り分け：案件ステータス優先 → タスクのkind → 日付（今日/明日/明後日以降）
+// 振り分け：タスクのkind → タスク自身の日付 → 案件ステータス → 案件の「いつやる」継承 → 明後日以降
 function laneOf(project, task) {
   if (!project) return "later";
   if (project.status === "完了") return null;
-  // 案件ステータス最優先（タスクの状態より案件を優先）
-  if (project.status === "相手待ち") return "waiting";
-  if (project.status === "支払い待ち") return "payment";
-  // タスク単体の相手待ち/支払い待ち
+  // タスク単体の相手待ち/支払い待ちが最優先
   if (task.kind === "waiting") return "waiting";
   if (task.kind === "payment") return "payment";
-  // 進行中：いつやる（なければ期限）で 今日/明日/明後日以降。超過は今日、日付なしは明後日以降。
-  const j = taskJudgeDate(task);
-  if (j) {
-    const n = daysUntil(j);
+  // タスク自身に日付（いつやる/期限）があれば、案件ステータスより日付を優先して振り分け
+  const own = taskJudgeDate(task);
+  if (own) {
+    const n = daysUntil(own);
+    if (n !== null) {
+      if (n <= 0) return "today";
+      if (n === 1) return "tomorrow";
+      return "later";
+    }
+  }
+  // 日付なしタスク：案件ステータスに従う
+  if (project.status === "相手待ち") return "waiting";
+  if (project.status === "支払い待ち") return "payment";
+  // 進行中の日付なしタスク：案件の「いつやる」を引き継ぐ
+  if (project.start) {
+    const n = daysUntil(project.start);
     if (n !== null) {
       if (n <= 0) return "today";
       if (n === 1) return "tomorrow";
@@ -326,6 +335,20 @@ function laneOf(project, task) {
 // 完了から30日経過したタスクはアーカイブ（一覧に出さない。データは残る）
 const ARCHIVE_MS = 30 * 24 * 3600 * 1000;
 const isArchivedTask = (t) => !!(t && t.done && t.doneAt && (Date.now() - t.doneAt > ARCHIVE_MS));
+// 確認日到来：日付が今日以前か（待ちタスクを今日タブへ浮上させる条件）
+const dueArrived = (dateStr) => { if (!dateStr) return false; const n = daysUntil(dateStr); return n !== null && n <= 0; };
+// タスクが指定レーンに表示されるか。相手待ち/支払い待ちのタスクでも、日付（確認日）が到来していれば今日にも出る
+function taskInLane(project, task, lane) {
+  const l = laneOf(project, task);
+  if (l === lane) return true;
+  return lane === "today" && (l === "waiting" || l === "payment") && dueArrived(taskJudgeDate(task));
+}
+// 案件行（未完了タスクなし案件）が指定レーンに表示されるか。待ち案件でも「いつやる」到来で今日にも出る
+function projectInLane(p, lane) {
+  const l = projectFallbackLane(p);
+  if (l === lane) return true;
+  return lane === "today" && (l === "waiting" || l === "payment") && dueArrived(p.start);
+}
 // 未完了タスクが1つも無い案件のレーン判定。「すべて」の区分けと各タブの表示・件数を一致させるために使う
 function projectFallbackLane(p) {
   if (!p || p.id === INBOX_ID || p.status === "完了") return null;
@@ -1335,14 +1358,12 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                 // PCの「すべて」は 今日/明日/明後日以降/相手待ち/支払い待ち を色バーで区切る。スマホは従来通り（相手待ち/支払い待ちのみバー）
                 const openT = (p) => (p.tasks || []).filter((t) => !t.done && !isArchivedTask(t));
                 const laneP = (p) => {
-                  const lanes = openT(p).map((t) => laneOf(p, t));
+                  const lanes = openT(p).map((t) => (taskInLane(p, t, "today") ? "today" : laneOf(p, t)));
                   if (lanes.includes("today")) return "today";
                   if (lanes.includes("tomorrow")) return "tomorrow";
                   if (lanes.length === 0) {
-                    const n = daysUntil(p.start);
-                    if (n !== null && n <= 0) return "today";
-                    if (n === 1) return "tomorrow";
-                    return "later";
+                    if (projectInLane(p, "today")) return "today";
+                    return projectFallbackLane(p) || "later";
                   }
                   // 自分でやるタスク（日付なし=later含む）が1つでもあれば日付区分。無ければ相手待ち＞支払い待ち
                   if (lanes.includes("later")) return "later";
@@ -1350,19 +1371,18 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                   if (lanes.includes("payment")) return "payment";
                   return "later";
                 };
-                const prog = cardList.filter((p) => p.status === "進行中");
                 const groups = wide
                   ? [
-                      { key: "today",    label: "今日",       color: "#6B8AFF", items: prog.filter((p) => laneP(p) === "today"), bar: true },
-                      { key: "tomorrow", label: "明日",       color: "#9AA4B2", items: prog.filter((p) => laneP(p) === "tomorrow"), bar: true },
-                      { key: "later",    label: "明後日以降", color: "#9AA4B2", items: prog.filter((p) => laneP(p) === "later"), bar: true },
-                      { key: "waiting", label: "相手待ち",   color: "#D9A23B", items: [...prog.filter((p) => laneP(p) === "waiting"), ...cardList.filter((p) => p.status === "相手待ち")], bar: true },
-                      { key: "payment", label: "支払い待ち", color: "#51CF66", items: [...prog.filter((p) => laneP(p) === "payment"), ...cardList.filter((p) => p.status === "支払い待ち")], bar: true },
+                      { key: "today",    label: "今日",       color: "#6B8AFF", items: cardList.filter((p) => laneP(p) === "today"), bar: true },
+                      { key: "tomorrow", label: "明日",       color: "#9AA4B2", items: cardList.filter((p) => laneP(p) === "tomorrow"), bar: true },
+                      { key: "later",    label: "明後日以降", color: "#9AA4B2", items: cardList.filter((p) => laneP(p) === "later"), bar: true },
+                      { key: "waiting", label: "相手待ち",   color: "#D9A23B", items: cardList.filter((p) => laneP(p) === "waiting"), bar: true },
+                      { key: "payment", label: "支払い待ち", color: "#51CF66", items: cardList.filter((p) => laneP(p) === "payment"), bar: true },
                     ]
                   : [
-                      { key: "進行中",     label: "進行中",     color: "#C0C9D6", items: prog.filter((p) => { const l = laneP(p); return l !== "waiting" && l !== "payment"; }), bar: false },
-                      { key: "相手待ち",   label: "相手待ち",   color: "#D9A23B", items: [...prog.filter((p) => laneP(p) === "waiting"), ...cardList.filter((p) => p.status === "相手待ち")], bar: true },
-                      { key: "支払い待ち", label: "支払い待ち", color: "#51CF66", items: [...prog.filter((p) => laneP(p) === "payment"), ...cardList.filter((p) => p.status === "支払い待ち")], bar: true },
+                      { key: "進行中",     label: "進行中",     color: "#C0C9D6", items: cardList.filter((p) => { const l = laneP(p); return l !== "waiting" && l !== "payment"; }), bar: false },
+                      { key: "相手待ち",   label: "相手待ち",   color: "#D9A23B", items: cardList.filter((p) => laneP(p) === "waiting"), bar: true },
+                      { key: "支払い待ち", label: "支払い待ち", color: "#51CF66", items: cardList.filter((p) => laneP(p) === "payment"), bar: true },
                     ];
                 return groups.map((g) => {
                   if (g.items.length === 0) return null;
@@ -1649,8 +1669,8 @@ function removeDragGhost(g) { if (g && g.parentNode) g.parentNode.removeChild(g)
 function focusFilterCount(projects, key) {
   if (key === "all") return projects.filter((p) => p.id !== INBOX_ID && p.status !== "完了").length;
   let c = 0;
-  projects.forEach((p) => (p.tasks || []).forEach((t) => { if (!t.done && laneOf(p, t) === key) c++; }));
-  projects.forEach((p) => { if (projectFallbackLane(p) === key) c++; }); // タスク無し案件の案件行も数える
+  projects.forEach((p) => (p.tasks || []).forEach((t) => { if (!t.done && taskInLane(p, t, key)) c++; }));
+  projects.forEach((p) => { if (projectInLane(p, key)) c++; }); // タスク無し案件の案件行も数える
   return c;
 }
 // 案件一覧上部のフィルタチップ（件数付き）
@@ -1922,9 +1942,9 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
   projects.forEach((p) => p.tasks.forEach((t) => all.push({ ...t, project: p, _lane: laneOf(p, t) })));
   const laneStatusOf = (lane) => lane === "waiting" ? "相手待ち" : lane === "payment" ? "支払い待ち" : null;
   const openTasksOf = (p) => (p.tasks || []).filter((t) => !t.done);
-  const countOf = (lane) => all.filter((t) => t._lane === lane && !t.done).length + projects.filter((p) => projectFallbackLane(p) === lane).length;
+  const countOf = (lane) => laneTasks(lane, false).length + projects.filter((p) => projectInLane(p, lane)).length;
   const laneTasks = (lane, doneOnly) => all
-    .filter((t) => t._lane === lane)
+    .filter((t) => doneOnly ? t._lane === lane : taskInLane(t.project, t, lane))
     .filter((t) => doneOnly ? (t.done && !isArchivedTask(t)) : !t.done)
     .sort((a, b) => (a.done === b.done ? 0 : a.done ? 1 : -1));
 
@@ -1940,7 +1960,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
     if (!doneOnly) {
       projects.forEach((p) => {
         if (gmap.has(p.id)) return;
-        if (projectFallbackLane(p) === lane) { const g = { project: p, tasks: [] }; gmap.set(p.id, g); groups.push(g); }
+        if (projectInLane(p, lane)) { const g = { project: p, tasks: [] }; gmap.set(p.id, g); groups.push(g); }
       });
       const order = new Map(projects.map((p, i) => [p.id, i]));
       groups.sort((a, b) => (order.get(a.project.id) ?? 0) - (order.get(b.project.id) ?? 0));
