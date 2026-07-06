@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-07a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-07b"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -326,6 +326,17 @@ function laneOf(project, task) {
 // 完了から30日経過したタスクはアーカイブ（一覧に出さない。データは残る）
 const ARCHIVE_MS = 30 * 24 * 3600 * 1000;
 const isArchivedTask = (t) => !!(t && t.done && t.doneAt && (Date.now() - t.doneAt > ARCHIVE_MS));
+// 未完了タスクが1つも無い案件のレーン判定。「すべて」の区分けと各タブの表示・件数を一致させるために使う
+function projectFallbackLane(p) {
+  if (!p || p.id === INBOX_ID || p.status === "完了") return null;
+  if ((p.tasks || []).some((t) => !t.done)) return null; // 未完了タスクがあればタスク側で判定
+  if (p.status === "相手待ち") return "waiting";
+  if (p.status === "支払い待ち") return "payment";
+  const n = daysUntil(p.start);
+  if (n !== null && n <= 0) return "today";
+  if (n === 1) return "tomorrow";
+  return "later";
+}
 // 案件の締切候補（納期＋未完了タスクの実施日/期限）を日数の配列で返す
 const dueDaysList = (p) => {
   const arr = [];
@@ -1611,6 +1622,7 @@ function focusFilterCount(projects, key) {
   if (key === "all") return projects.filter((p) => p.id !== INBOX_ID && p.status !== "完了").length;
   let c = 0;
   projects.forEach((p) => (p.tasks || []).forEach((t) => { if (!t.done && laneOf(p, t) === key) c++; }));
+  projects.forEach((p) => { if (projectFallbackLane(p) === key) c++; }); // タスク無し案件の案件行も数える
   return c;
 }
 // 案件一覧上部のフィルタチップ（件数付き）
@@ -1882,13 +1894,14 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
   projects.forEach((p) => p.tasks.forEach((t) => all.push({ ...t, project: p, _lane: laneOf(p, t) })));
   const laneStatusOf = (lane) => lane === "waiting" ? "相手待ち" : lane === "payment" ? "支払い待ち" : null;
   const openTasksOf = (p) => (p.tasks || []).filter((t) => !t.done);
-  const countOf = (lane) => all.filter((t) => t._lane === lane && !t.done).length;
+  const countOf = (lane) => all.filter((t) => t._lane === lane && !t.done).length + projects.filter((p) => projectFallbackLane(p) === lane).length;
   const laneTasks = (lane, doneOnly) => all
     .filter((t) => t._lane === lane)
     .filter((t) => doneOnly ? (t.done && !isArchivedTask(t)) : !t.done)
     .sort((a, b) => (a.done === b.done ? 0 : a.done ? 1 : -1));
 
-  // レーンごとの案件グループを構築（doneOnly=true で完了タスクのみ）
+  // レーンごとの案件グループを構築（doneOnly=true で完了タスクのみ）。
+  // 未完了タスクが無い案件も「すべて」と同じ判定（projectFallbackLane）で案件行として出す
   const buildGroups = (lane, doneOnly) => {
     const items = laneTasks(lane, doneOnly);
     const groups = []; const gmap = new Map();
@@ -1896,6 +1909,14 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
       if (!gmap.has(t.project.id)) { const g = { project: t.project, tasks: [] }; gmap.set(t.project.id, g); groups.push(g); }
       gmap.get(t.project.id).tasks.push(t);
     });
+    if (!doneOnly) {
+      projects.forEach((p) => {
+        if (gmap.has(p.id)) return;
+        if (projectFallbackLane(p) === lane) { const g = { project: p, tasks: [] }; gmap.set(p.id, g); groups.push(g); }
+      });
+      const order = new Map(projects.map((p, i) => [p.id, i]));
+      groups.sort((a, b) => (order.get(a.project.id) ?? 0) - (order.get(b.project.id) ?? 0));
+    }
     return groups;
   };
   const doneCountLane = (lane) => all.filter((t) => t._lane === lane && t.done && !isArchivedTask(t)).length;
@@ -1905,6 +1926,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
       <GroupHead project={g.project} lane={lane}
         dragActive={dragTid !== null || dragGid !== null}
         onStartDrag={startGroupDrag} onOpen={onOpen} onToggleProject={onToggleProject} />
+      {g.tasks.length > 0 && (
       <div style={S.taskGroupTasks}>
         {g.tasks.map((t) => (
           <TaskCard key={t.id} t={t} lane={lane}
@@ -1916,6 +1938,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
             onChangeKind={(kind) => onChangeKind && onChangeKind(t.project.id, t.id, kind)} />
         ))}
       </div>
+      )}
     </div>
   ));
 
