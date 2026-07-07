@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-07i"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-07j"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -231,10 +231,9 @@ const nextRepeat = (r, fromStr) => {
 const repeatLabelJP = (r) => {
   if (!r || !r.freq) return "";
   if (r.freq === "daily") return "毎日";
-  if (r.freq === "weekly") { const d = (r.days || [])[0]; return `毎週${WD_JP[d ?? 0]}`; }
+  if (r.freq === "weekly" || r.freq === "custom") { const ds = (r.days || []).slice().sort((a, b) => a - b); return ds.length ? `毎週${ds.map((d) => WD_JP[d]).join("・")}` : "毎週"; }
   if (r.freq === "monthly") return `毎月${r.day || 1}日`;
   if (r.freq === "yearly") return `毎年${r.month || 1}/${r.day || 1}`;
-  if (r.freq === "custom") { const ds = (r.days || []).slice().sort((a, b) => a - b); return ds.length ? ds.map((d) => WD_JP[d]).join("・") : "カスタム"; }
   return "";
 };
 // 返信タスク（当日期限）。msg はクライアントから届いた原文をそのまま保持
@@ -3100,21 +3099,19 @@ function RepeatModal({ value, onApply, onClose }) {
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || lo));
   const pickFreq = (freq) => {
     if (freq === "daily") setR({ freq: "daily" });
-    else if (freq === "weekly") setR({ freq: "weekly", days: [(r && r.days && r.days[0]) ?? todayDow] });
+    else if (freq === "weekly") setR({ freq: "weekly", days: (r && Array.isArray(r.days) && r.days.length) ? r.days : [todayDow] });
     else if (freq === "monthly") setR({ freq: "monthly", day: (r && r.day) || todayD });
     else if (freq === "yearly") setR({ freq: "yearly", month: (r && r.month) || todayM, day: (r && r.day) || todayD });
-    else if (freq === "custom") setR({ freq: "custom", days: (r && Array.isArray(r.days) && r.days.length) ? r.days : [todayDow] });
   };
   const toggleDow = (d) => {
     if (!r) return;
-    if (r.freq === "weekly") { setR({ ...r, days: [d] }); return; }
     const cur = r.days || [];
     const next = cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d];
     if (next.length) setR({ ...r, days: next });
   };
   const done = () => { onApply(r); onClose(); };
   const clear = () => { onApply(null); onClose(); };
-  const FREQS = [["daily", "毎日"], ["weekly", "毎週"], ["monthly", "毎月"], ["yearly", "毎年"], ["custom", "カスタム"]];
+  const FREQS = [["daily", "毎日"], ["weekly", "毎週"], ["monthly", "毎月"], ["yearly", "毎年"]];
   const showDow = r && (r.freq === "weekly" || r.freq === "custom");
   return (
     <div style={S.calModalScrim} onPointerDown={(e) => { stop(e); onClose(); }} onClick={stop}>
