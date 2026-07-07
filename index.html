@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-07h"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-07i"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -201,6 +201,41 @@ const nextMonthly = (day, fromStr) => {
   let occ = mk(y, m);
   if (occ < base) { m++; if (m > 11) { m = 0; y++; } occ = mk(y, m); }
   return fmtYMD(occ);
+};
+// 繰り返し設定 r から「from 以降で最初の」発生日を返す（汎用）
+// r = {freq:"daily"} | {freq:"weekly",days:[dow]} | {freq:"monthly",day:N} | {freq:"yearly",month:M,day:N} | {freq:"custom",days:[dow...]}
+const nextRepeat = (r, fromStr) => {
+  if (!r || !r.freq) return "";
+  const from = fromStr ? (() => { const p = String(fromStr).split("-").map(Number); return new Date(p[0], p[1] - 1, p[2]); })() : new Date(TODAY);
+  from.setHours(0, 0, 0, 0);
+  if (r.freq === "daily") return fmtYMD(from);
+  if (r.freq === "weekly" || r.freq === "custom") {
+    const days = (Array.isArray(r.days) && r.days.length) ? r.days : [new Date(TODAY).getDay()];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(from); d.setDate(d.getDate() + i);
+      if (days.includes(d.getDay())) return fmtYMD(d);
+    }
+    return fmtYMD(from);
+  }
+  if (r.freq === "monthly") return nextMonthly(r.day || 1, fromStr);
+  if (r.freq === "yearly") {
+    const month = Math.min(12, Math.max(1, r.month || 1)), day = Math.min(31, Math.max(1, r.day || 1));
+    const mk = (y) => { const last = new Date(y, month, 0).getDate(); return new Date(y, month - 1, Math.min(day, last)); };
+    let occ = mk(from.getFullYear());
+    if (occ < from) occ = mk(from.getFullYear() + 1);
+    return fmtYMD(occ);
+  }
+  return "";
+};
+// 繰り返しの表示ラベル（例: 毎日／毎週月／毎月15日／毎年7/7／月・水・金）
+const repeatLabelJP = (r) => {
+  if (!r || !r.freq) return "";
+  if (r.freq === "daily") return "毎日";
+  if (r.freq === "weekly") { const d = (r.days || [])[0]; return `毎週${WD_JP[d ?? 0]}`; }
+  if (r.freq === "monthly") return `毎月${r.day || 1}日`;
+  if (r.freq === "yearly") return `毎年${r.month || 1}/${r.day || 1}`;
+  if (r.freq === "custom") { const ds = (r.days || []).slice().sort((a, b) => a - b); return ds.length ? ds.map((d) => WD_JP[d]).join("・") : "カスタム"; }
+  return "";
 };
 // 返信タスク（当日期限）。msg はクライアントから届いた原文をそのまま保持
 const reply = (title, msg = "") => ({ id: uid(), title, done: false, due: dStr(0), lane: "today", kind: "reply", msg, note: "", repeat: null, links: [] });
@@ -862,9 +897,10 @@ export default function App() {
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => {
         if (t.id !== tid) return t;
-        // 繰り返しタスク：完了にしたら翌月の指定日へ送って未完了のまま継続表示
-        if (!t.done && t.repeat && t.repeat.freq === "monthly" && t.repeat.day) {
-          return { ...t, done: false, start: nextMonthly(t.repeat.day, dStr(1)) };
+        // 繰り返しタスク：完了にしたら次回の発生日へ送って未完了のまま継続表示
+        if (!t.done && t.repeat && t.repeat.freq) {
+          const nx = nextRepeat(t.repeat, dStr(1));
+          if (nx) return { ...t, done: false, start: nx };
         }
         const nowDone = !t.done;
         return { ...t, done: nowDone, doneAt: nowDone ? Date.now() : null };
@@ -3032,26 +3068,108 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
   );
 }
 function RepeatField({ value, onChange }) {
-  const setDay = (n) => { const day = Math.min(31, Math.max(1, Number(n) || 1)); onChange({ repeat: { freq: "monthly", day }, start: nextMonthly(day) }); };
+  const [open, setOpen] = useState(false);
+  const apply = (r) => onChange(r ? { repeat: r, start: nextRepeat(r) } : { repeat: null });
   if (!value) {
     return (
-      <button style={S.repeatIconBtn} title="毎月くり返し"
-        onPointerDown={(e) => e.stopPropagation()}
-        onClick={() => setDay(new Date(TODAY).getDate())}>
-        <Repeat size={15} color={C.ink3} strokeWidth={2.2} />
-      </button>
+      <span onPointerDown={(e) => e.stopPropagation()}>
+        <button style={S.repeatIconBtn} title="繰り返し" onClick={() => setOpen(true)}>
+          <Repeat size={15} color={C.ink3} strokeWidth={2.2} />
+        </button>
+        {open && <RepeatModal value={value} onApply={apply} onClose={() => setOpen(false)} />}
+      </span>
     );
   }
   return (
     <span style={S.repeatCompact} onPointerDown={(e) => e.stopPropagation()}>
       <Repeat size={14} color={C.accent} strokeWidth={2.4} />
-      <input type="number" min={1} max={31} value={value.day} style={S.repeatDayInputSmall}
-        onChange={(e) => setDay(e.target.value)} />
-      <span style={S.repeatCompactLabel}>日</span>
+      <span style={{ ...S.repeatCompactLabel, cursor: "pointer" }} onClick={() => setOpen(true)}>{repeatLabelJP(value)}</span>
       <button style={S.repeatClearSmall} onClick={() => onChange({ repeat: null })} title="繰り返しを解除">
         <X size={11} strokeWidth={2.4} />
       </button>
+      {open && <RepeatModal value={value} onApply={apply} onClose={() => setOpen(false)} />}
     </span>
+  );
+}
+function RepeatModal({ value, onApply, onClose }) {
+  const todayDow = new Date(TODAY).getDay();
+  const todayD = new Date(TODAY).getDate();
+  const todayM = new Date(TODAY).getMonth() + 1;
+  const [r, setR] = useState(value || null);
+  const stop = (e) => e.stopPropagation();
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || lo));
+  const pickFreq = (freq) => {
+    if (freq === "daily") setR({ freq: "daily" });
+    else if (freq === "weekly") setR({ freq: "weekly", days: [(r && r.days && r.days[0]) ?? todayDow] });
+    else if (freq === "monthly") setR({ freq: "monthly", day: (r && r.day) || todayD });
+    else if (freq === "yearly") setR({ freq: "yearly", month: (r && r.month) || todayM, day: (r && r.day) || todayD });
+    else if (freq === "custom") setR({ freq: "custom", days: (r && Array.isArray(r.days) && r.days.length) ? r.days : [todayDow] });
+  };
+  const toggleDow = (d) => {
+    if (!r) return;
+    if (r.freq === "weekly") { setR({ ...r, days: [d] }); return; }
+    const cur = r.days || [];
+    const next = cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d];
+    if (next.length) setR({ ...r, days: next });
+  };
+  const done = () => { onApply(r); onClose(); };
+  const clear = () => { onApply(null); onClose(); };
+  const FREQS = [["daily", "毎日"], ["weekly", "毎週"], ["monthly", "毎月"], ["yearly", "毎年"], ["custom", "カスタム"]];
+  const showDow = r && (r.freq === "weekly" || r.freq === "custom");
+  return (
+    <div style={S.calModalScrim} onPointerDown={(e) => { stop(e); onClose(); }} onClick={stop}>
+      <div style={S.calModalCard} onPointerDown={stop} onClick={stop}>
+        <div style={S.repeatModalHead}>繰り返し</div>
+        <div style={S.repeatFreqRow}>
+          {FREQS.map(([k, label]) => {
+            const active = r && r.freq === k;
+            return (
+              <button key={k} style={{ ...S.repeatFreqBtn, ...(active ? S.repeatFreqBtnOn : {}) }} onClick={() => pickFreq(k)}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        {showDow && (
+          <div style={S.repeatDowRow}>
+            {WD_JP.map((w, i) => {
+              const on = (r.days || []).includes(i);
+              return (
+                <button key={w} style={{ ...S.repeatDowBtn, ...(on ? S.repeatDowBtnOn : {}), ...(i === 0 && !on ? { color: "#FF6B6B" } : {}) }}
+                  onClick={() => toggleDow(i)}>
+                  {w}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {r && r.freq === "monthly" && (
+          <div style={S.repeatDetailRow}>
+            <span style={S.repeatDetailLabel}>毎月</span>
+            <input type="number" min={1} max={31} value={r.day} style={S.repeatNumInput}
+              onChange={(e) => setR({ ...r, day: clamp(e.target.value, 1, 31) })} />
+            <span style={S.repeatDetailLabel}>日</span>
+          </div>
+        )}
+        {r && r.freq === "yearly" && (
+          <div style={S.repeatDetailRow}>
+            <span style={S.repeatDetailLabel}>毎年</span>
+            <input type="number" min={1} max={12} value={r.month} style={S.repeatNumInput}
+              onChange={(e) => setR({ ...r, month: clamp(e.target.value, 1, 12) })} />
+            <span style={S.repeatDetailLabel}>月</span>
+            <input type="number" min={1} max={31} value={r.day} style={S.repeatNumInput}
+              onChange={(e) => setR({ ...r, day: clamp(e.target.value, 1, 31) })} />
+            <span style={S.repeatDetailLabel}>日</span>
+          </div>
+        )}
+        {r && <div style={S.repeatPreview}>次回: {(() => { const n = nextRepeat(r); return n ? dateLabelJP(n).text : "—"; })()}</div>}
+        <div style={S.calModalFoot}>
+          <button style={S.calModalClear} onClick={clear}>解除</button>
+          <button style={{ ...S.calModalQuickBtn, flex: "none", padding: "9px 22px", ...(r ? { borderColor: "transparent", background: C.accent, color: "#fff" } : { opacity: 0.5 }) }}
+            disabled={!r} onClick={done}>完了</button>
+        </div>
+      </div>
+    </div>
   );
 }
 function CalendarModal({ value, onChange, onClose }) {
@@ -4058,6 +4176,17 @@ const S = {
   repeatCompactLabel: { fontSize: 12, color: C.ink2, fontWeight: 600 },
   repeatDayInputSmall: { width: 32, textAlign: "center", background: "transparent", border: "none", color: C.ink, fontSize: 13.5, fontWeight: 700, padding: 0, outline: "none" },
   repeatClearSmall: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, border: "none", background: "transparent", color: C.ink3, borderRadius: 4, padding: 0, cursor: "pointer" },
+  repeatModalHead: { fontFamily: F.disp, fontWeight: 700, fontSize: 18, color: C.ink, padding: "2px 4px 12px" },
+  repeatFreqRow: { display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6, marginBottom: 12 },
+  repeatFreqBtn: { border: "none", background: C.panel2, color: C.ink2, fontSize: 13.5, fontWeight: 600, padding: "9px 2px", borderRadius: 10, cursor: "pointer" },
+  repeatFreqBtnOn: { background: C.accent, color: "#fff" },
+  repeatDowRow: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 5, marginBottom: 12 },
+  repeatDowBtn: { display: "flex", alignItems: "center", justifyContent: "center", aspectRatio: "1 / 1", border: "none", background: C.panel2, borderRadius: "50%", fontSize: 14.5, fontWeight: 600, color: C.ink, cursor: "pointer" },
+  repeatDowBtnOn: { background: C.accent, color: "#fff" },
+  repeatDetailRow: { display: "flex", alignItems: "center", gap: 7, marginBottom: 12, padding: "0 2px" },
+  repeatDetailLabel: { fontSize: 14.5, color: C.ink2, fontWeight: 600 },
+  repeatNumInput: { width: 52, textAlign: "center", background: C.panel2, border: "none", borderRadius: 8, color: C.ink, fontSize: 15, fontWeight: 700, padding: "7px 4px", outline: "none" },
+  repeatPreview: { fontSize: 13.5, color: C.ink3, padding: "0 4px 2px" },
   taskDate: { background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 8px", fontSize: 14, color: C.ink2, width: "100%" },
   taskRowOld_removed: { display: "none" },
 
