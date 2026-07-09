@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-09b"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-09c"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -1768,12 +1768,18 @@ function ProjectListView({ projects, onOpen }) {
   };
   const open = projects.filter((p) => p.id !== INBOX_ID && p.status !== "完了").sort((a, b) => recency(b) - recency(a));
   const doneList = projects.filter((p) => p.id !== INBOX_ID && p.status === "完了").sort((a, b) => recency(b) - recency(a));
-  const Row = ({ p, dim }) => (
+  const Row = ({ p, dim }) => {
+    const ls = p.links || [];
+    const iconUrl = (() => { const r = ls.find((l) => l.kind === "reply" && l.url); const a = ls.find((l) => l.url); return (r && r.url) || (a && a.url) || ""; })();
+    return (
     <div style={{ ...S.plItem, ...(dim ? { opacity: 0.55 } : {}) }}>
-      <button style={S.plName} onClick={() => onOpen(p)}>{p.company || "（無題）"}</button>
-      {p.links && p.links.length > 0 && (
+      <div style={S.plNameRow}>
+        {iconUrl ? <Favicon url={iconUrl} size={18} /> : null}
+        <button style={S.plName} onClick={() => onOpen(p)}>{p.company || "（無題）"}</button>
+      </div>
+      {ls.length > 0 && (
         <div style={S.plLinks}>
-          {p.links.map((l) => (
+          {ls.map((l) => (
             <a key={l.id} href={l.url || undefined} target="_blank" rel="noopener noreferrer"
               style={{ ...S.plLink, ...(l.kind === "reply" ? S.plLinkReply : {}) }}
               onClick={(e) => { e.stopPropagation(); if (!l.url) e.preventDefault(); }} title={l.url || ""}>
@@ -1783,7 +1789,8 @@ function ProjectListView({ projects, onOpen }) {
         </div>
       )}
     </div>
-  );
+    );
+  };
   return (
     <div style={S.colWrap}>
       {open.length === 0 && <div style={S.plEmpty}>案件がありません</div>}
@@ -3129,21 +3136,14 @@ function SubtaskSheet({ project, task, focus, onClose, onUpdate, onToggle, onDel
               <ListChecks size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
               <div style={S.kindSegRow}>
                 {[
-                  { k: "task",    label: "進行中",     Icon: User,      color: C.ink2 },
-                  { k: "waiting", label: "相手待ち",   Icon: Hourglass, color: "#D9A23B" },
-                  { k: "payment", label: "支払い待ち", Icon: Coins,     color: "#51CF66" },
-                  { k: "done",    label: "完了",       Icon: Check,     color: "#51CF66" },
+                  { k: "task",    label: "進行中",   Icon: User,      color: C.ink2 },
+                  { k: "waiting", label: "相手待ち", Icon: Hourglass, color: "#D9A23B" },
                 ].map((o) => {
-                  const isDone = !!task.done;
-                  const active = o.k === "done" ? isDone : (!isDone && (task.kind || "task") === o.k);
+                  const active = (task.kind || "task") === o.k;
                   return (
                     <button key={o.k}
                       style={{ ...S.kindSegBtn, ...(active ? { background: C.panel2, color: C.ink, borderColor: "transparent" } : {}) }}
-                      onClick={() => {
-                        if (o.k === "done") onToggle();
-                        else if (isDone) onUpdate({ done: false, doneAt: null, kind: o.k });
-                        else onUpdate({ kind: o.k });
-                      }}>
+                      onClick={() => onUpdate({ kind: o.k })}>
                       <o.Icon size={13} color={active ? o.color : C.ink3} strokeWidth={2.3} />
                       {o.label}
                     </button>
@@ -4436,7 +4436,8 @@ const S = {
   taskGroupTasks: { display: "flex", flexDirection: "column", gap: 4, marginTop: 10, paddingLeft: 30 },
   doneAccordion: { display: "flex", alignItems: "center", gap: 6, border: "none", background: "transparent", color: C.ink2, padding: "10px 4px", fontSize: 13.5, fontWeight: 700, textAlign: "left", cursor: "pointer", width: "100%", marginTop: 4 },
   plItem: { padding: "11px 2px 13px", borderBottom: `1px solid ${C.line}` },
-  plName: { display: "block", width: "100%", textAlign: "left", border: "none", background: "transparent", color: C.ink, fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, cursor: "pointer", padding: 0, lineHeight: 1.3 },
+  plNameRow: { display: "flex", alignItems: "center", gap: 8 },
+  plName: { flex: 1, minWidth: 0, textAlign: "left", border: "none", background: "transparent", color: C.ink, fontFamily: F.disp, fontWeight: 800, fontSize: 19, letterSpacing: 0.2, cursor: "pointer", padding: 0, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   plLinks: { display: "flex", flexWrap: "wrap", gap: "6px 16px", marginTop: 7 },
   plLink: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 16.5, color: C.ink2, textDecoration: "none", padding: "3px 0", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   plLinkReply: { color: C.accent, fontWeight: 700 },
