@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-09d"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-11a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -553,6 +553,8 @@ export default function App() {
   const [focusTaskId, setFocusTaskId] = useState(null); // タスクから開いたとき、上部に表示するタスクID
   const openProjectTask = (project, taskId) => { setFocusTaskId(taskId || null); setEditing(project); };
   const [confirmDel, setConfirmDel] = useState(null);
+  const [undoDel, setUndoDel] = useState(null); // ③ 削除の「元に戻す」トースト { project, index }
+  const undoTimer = useRef(null);
   const [showSettings, setShowSettings] = useState(false);
   const [editTask, setEditTask] = useState(null); // { pid, tid, focus } サブタスク単体の編集
   // 日付が変わったら（開きっぱなしでも）自動で最新化。編集中は暴発させない
@@ -937,7 +939,27 @@ export default function App() {
       return next;
     });
   };
-  const removeProject = (id) => { persist(projects.filter((p) => p.id !== id)); setConfirmDel(null); goBack(); };
+  const removeProject = (id) => {
+    const idx = projects.findIndex((p) => p.id === id);
+    const removed = idx >= 0 ? projects[idx] : null;
+    persist(projects.filter((p) => p.id !== id)); setConfirmDel(null); goBack();
+    if (removed && removed.id !== INBOX_ID) {
+      setUndoDel({ project: removed, index: idx });
+      if (undoTimer.current) clearTimeout(undoTimer.current);
+      undoTimer.current = setTimeout(() => setUndoDel(null), 8000);
+    }
+  };
+  const undoRemove = () => {
+    const u = undoDel; if (!u) return;
+    if (undoTimer.current) { clearTimeout(undoTimer.current); undoTimer.current = null; }
+    const cur = projectsRef.current || projects;
+    if (!cur.some((p) => p.id === u.project.id)) {
+      const next = [...cur];
+      next.splice(Math.min(u.index, next.length), 0, u.project);
+      persist(next);
+    }
+    setUndoDel(null);
+  };
   const toggleTask = (pid, tid) =>
     persist(projects.map((p) => p.id !== pid ? p : {
       ...p, tasks: p.tasks.map((t) => {
@@ -959,6 +981,9 @@ export default function App() {
     persist(projects.map((p) => p.id !== pid ? p : { ...p, status: p.status === "完了" ? "進行中" : "完了" }));
   const setProjectStatus = (pid, status) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, status }));
+  // ① 案件一覧のリンク並び替え（project.linksを共有しているので詳細ドロワーも同順になる）
+  const reorderLinks = (pid, links) =>
+    persist(projects.map((p) => p.id !== pid ? p : { ...p, links }));
   const changeLane = (pid, tid, lane) => {
     if (lane === "waiting" || lane === "payment") {
       const status = lane === "waiting" ? "相手待ち" : "支払い待ち";
@@ -1121,7 +1146,7 @@ export default function App() {
       {/* ===== Body ===== */}
       <main style={S.main} onTouchStart={onMainTouchStart} onTouchEnd={onMainTouchEnd}>
         {view === "focus" && <FilterChips projects={projects} filter={focusFilter} onChange={setFocusFilter} />}
-        {view === "focus" && focusFilter === "registry" && <ProjectListView projects={projects} onOpen={openProject} />}
+        {view === "focus" && focusFilter === "registry" && <ProjectListView projects={projects} onOpen={openProject} onReorderLinks={reorderLinks} />}
         {view === "focus" && focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} onReorderTask={reorderTaskVisual} onMoveTask={moveTaskToProject} sortMode={sortMode} setSortMode={setSortMode} />}
         {view === "focus" && focusFilter !== "all" && focusFilter !== "registry" && <TasksView singleLane projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderProject={reorderVisual} onSortManual={() => setSortMode("manual")} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} activeLane={focusFilter} setActiveLane={setFocusFilter} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={openProject} />}
@@ -1162,6 +1187,14 @@ export default function App() {
             onDelete={() => { removeTaskFromProject(editTask.pid, editTask.tid); goBack(); }} />
         );
       })()}
+
+      {/* ===== ③ 削除の「元に戻す」トースト ===== */}
+      {undoDel && (
+        <div style={S.undoToast}>
+          <span style={S.undoToastText}>「{undoDel.project.company || "（無題）"}」を削除しました</span>
+          <button style={S.undoToastBtn} onClick={undoRemove}>元に戻す</button>
+        </div>
+      )}
 
       {/* ===== 右下フローティング＋ボタン（Googleカレンダー方式） ===== */}
       {!editing && !showSettings && !confirmDel && !editTask && (
@@ -1758,7 +1791,114 @@ function focusFilterCount(projects, key) {
   return c;
 }
 // 案件一覧上部のフィルタチップ（件数付き）
-function ProjectListView({ projects, onOpen }) {
+// ① 案件一覧の1行。リンクチップは長押し(180ms)→ドラッグで同一案件内のみ並び替え可能
+function PLRow({ p, dim, onOpen, onReorderLinks }) {
+  const ls = p.links || [];
+  const [order, setOrder] = useState(null);   // ドラッグ中の見た目上の並び（link idの配列）
+  const [dragLid, setDragLid] = useState(null);
+  const lpTimer = useRef(null);
+  const downInfo = useRef(null);
+  const dragRef = useRef(null);
+  const suppressClick = useRef(false);
+  const wrapRef = useRef(null);
+  const lsRef = useRef(ls); lsRef.current = ls;
+  const preventScroll = useRef((e) => { e.preventDefault(); }).current;
+  useEffect(() => () => { try { document.removeEventListener("touchmove", preventScroll); } catch {} }, []);
+  const chipDown = (e, lid) => {
+    downInfo.current = { x: e.clientX, y: e.clientY, lid, el: e.currentTarget, pointerId: e.pointerId };
+    lpTimer.current = setTimeout(() => {
+      const di = downInfo.current; if (!di) return;
+      lpTimer.current = null;
+      try { di.el.setPointerCapture(di.pointerId); } catch {}
+      try { document.addEventListener("touchmove", preventScroll, { passive: false }); } catch {}
+      dragRef.current = { lid };
+      setDragLid(lid);
+      setOrder(lsRef.current.map((l) => l.id));
+      try { if (navigator.vibrate) navigator.vibrate(10); } catch {}
+    }, 180);
+  };
+  const chipMove = (e) => {
+    if (lpTimer.current && downInfo.current) {
+      if (Math.hypot(e.clientX - downInfo.current.x, e.clientY - downInfo.current.y) > 10) { clearTimeout(lpTimer.current); lpTimer.current = null; }
+    }
+    const dr = dragRef.current; if (!dr) return;
+    const wrap = wrapRef.current; if (!wrap) return;
+    const chips = Array.from(wrap.querySelectorAll("[data-lid]"));
+    let target = null;
+    for (const c of chips) {
+      const r = c.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) { target = c.getAttribute("data-lid"); break; }
+    }
+    if (!target || target === dr.lid) return;
+    setOrder((prev) => {
+      const arr = prev ? [...prev] : lsRef.current.map((l) => l.id);
+      const from = arr.indexOf(dr.lid), to = arr.indexOf(target);
+      if (from < 0 || to < 0 || from === to) return prev;
+      arr.splice(from, 1); arr.splice(to, 0, dr.lid);
+      return arr;
+    });
+  };
+  const chipUp = () => {
+    if (lpTimer.current) { clearTimeout(lpTimer.current); lpTimer.current = null; }
+    if (dragRef.current) {
+      try { document.removeEventListener("touchmove", preventScroll); } catch {}
+      setOrder((cur) => {
+        if (cur) {
+          const base = lsRef.current;
+          const changed = cur.length === base.length && cur.some((id, i) => base[i] && base[i].id !== id);
+          if (changed) {
+            const next = cur.map((id) => base.find((l) => l.id === id)).filter(Boolean);
+            if (next.length === base.length) onReorderLinks(p.id, next);
+          }
+        }
+        return null;
+      });
+      dragRef.current = null;
+      setDragLid(null);
+      suppressClick.current = true;
+      setTimeout(() => { suppressClick.current = false; }, 250);
+    }
+    downInfo.current = null;
+  };
+  const openLink = (e, l) => {
+    e.stopPropagation();
+    if (suppressClick.current || dragRef.current) { e.preventDefault(); return; }
+    if (!l.url) { e.preventDefault(); return; }
+    if (isAndroidUA()) {
+      const iu = claudeIntentUrl(l.url);
+      if (iu) { e.preventDefault(); window.location.href = iu; }
+    }
+  };
+  const shownLinks = order ? order.map((id) => ls.find((l) => l.id === id)).filter(Boolean) : ls;
+  return (
+    <div style={{ ...S.plItem, ...(dim ? { opacity: 0.55 } : {}) }}>
+      <button style={S.plName} onClick={() => onOpen(p)}>{p.company || "（無題）"}</button>
+      {ls.length > 0 && (
+        <div ref={wrapRef} style={S.plLinks}>
+          {shownLinks.map((l) => {
+            const ic = linkIconOf(l);
+            const dragging = dragLid === l.id;
+            return (
+            <a key={l.id} data-lid={l.id} href={l.url || undefined} target="_blank" rel="noopener noreferrer"
+              draggable={false} onDragStart={(e) => e.preventDefault()}
+              onContextMenu={(e) => e.preventDefault()}
+              style={{ ...S.plLink, ...(l.kind === "reply" ? S.plLinkReply : {}),
+                ...(dragging ? S.plLinkDragging : {}),
+                ...(dragLid && !dragging ? { opacity: 0.55 } : {}),
+                touchAction: dragLid ? "none" : "pan-y" }}
+              onPointerDown={(e) => chipDown(e, l.id)} onPointerMove={chipMove} onPointerUp={chipUp} onPointerCancel={chipUp}
+              onClick={(e) => openLink(e, l)} title={l.url || ""}>
+              {l.url ? <Favicon url={l.url} size={15} /> : <ic.Icon size={14} color={ic.color} strokeWidth={2.2} style={{ flexShrink: 0 }} />}
+              {linkLabelOf(l)}
+            </a>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+function ProjectListView({ projects, onOpen, onReorderLinks }) {
   const [showDone, setShowDone] = useState(false);
   const recency = (p) => {
     let m = (typeof p.repliedAt === "number") ? p.repliedAt : 0;
@@ -1768,40 +1908,17 @@ function ProjectListView({ projects, onOpen }) {
   };
   const open = projects.filter((p) => p.id !== INBOX_ID && p.status !== "完了").sort((a, b) => recency(b) - recency(a));
   const doneList = projects.filter((p) => p.id !== INBOX_ID && p.status === "完了").sort((a, b) => recency(b) - recency(a));
-  const Row = ({ p, dim }) => {
-    const ls = p.links || [];
-    return (
-    <div style={{ ...S.plItem, ...(dim ? { opacity: 0.55 } : {}) }}>
-      <button style={S.plName} onClick={() => onOpen(p)}>{p.company || "（無題）"}</button>
-      {ls.length > 0 && (
-        <div style={S.plLinks}>
-          {ls.map((l) => {
-            const ic = linkIconOf(l);
-            return (
-            <a key={l.id} href={l.url || undefined} target="_blank" rel="noopener noreferrer"
-              style={{ ...S.plLink, ...(l.kind === "reply" ? S.plLinkReply : {}) }}
-              onClick={(e) => { e.stopPropagation(); if (!l.url) e.preventDefault(); }} title={l.url || ""}>
-              {l.url ? <Favicon url={l.url} size={15} /> : <ic.Icon size={14} color={ic.color} strokeWidth={2.2} style={{ flexShrink: 0 }} />}
-              {linkLabelOf(l)}
-            </a>
-            );
-          })}
-        </div>
-      )}
-    </div>
-    );
-  };
   return (
     <div style={S.colWrap}>
       {open.length === 0 && <div style={S.plEmpty}>案件がありません</div>}
-      {open.map((p) => <Row key={p.id} p={p} />)}
+      {open.map((p) => <PLRow key={p.id} p={p} onOpen={onOpen} onReorderLinks={onReorderLinks} />)}
       {doneList.length > 0 && (
         <>
           <button style={{ ...S.doneAccordion, marginTop: 10 }} onClick={() => setShowDone((v) => !v)}>
             <ChevronRight size={13} strokeWidth={2.4} style={{ transform: showDone ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
             完了 ({doneList.length}件)
           </button>
-          {showDone && doneList.map((p) => <Row key={p.id} p={p} dim />)}
+          {showDone && doneList.map((p) => <PLRow key={p.id} p={p} dim onOpen={onOpen} onReorderLinks={onReorderLinks} />)}
         </>
       )}
     </div>
@@ -2779,13 +2896,27 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
 
         <div style={S.drawerFoot}>
           {!isNew && (
-            confirmDel === d.id ? (
-              <div style={S.delConfirm}>
-                <span style={S.delText}>削除しますか？</span>
+            confirmDel === d.id ? (() => {
+              // ③ 「続いている案件」の誤削除防止：完了以外／未完了タスク／納期が今日以降 なら強い警告
+              const openTasks = (d.tasks || []).filter((t) => !t.done).length;
+              const warns = [];
+              if (d.status !== "完了") warns.push(`ステータス「${d.status}」`);
+              if (openTasks > 0) warns.push(`未完了タスク${openTasks}件`);
+              if (d.deadline && d.deadline >= dStr(0)) warns.push(`納期 ${d.deadline.slice(5).replace("-", "/")}`);
+              return (
+              <div style={{ ...S.delConfirm, ...(warns.length ? { flexWrap: "wrap" } : {}) }}>
+                {warns.length > 0 && (
+                  <span style={S.delWarnText}>
+                    <AlertTriangle size={13} strokeWidth={2.4} style={{ verticalAlign: "-2px", marginRight: 4 }} />
+                    {warns.join("・")}
+                  </span>
+                )}
+                <span style={S.delText}>{warns.length ? "本当に削除しますか？" : "削除しますか？"}</span>
                 <button style={S.delYes} onClick={() => onConfirmDelete(d.id)}>削除</button>
                 <button style={S.delNo} onClick={onCancelDelete}>戻る</button>
               </div>
-            ) : (
+              );
+            })() : (
               <button style={S.delBtn} onClick={() => onDelete(d.id)}><Trash2 size={15} />削除</button>
             )
           )}
@@ -3647,6 +3778,17 @@ function urlAutoLabel(url) {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
 }
 function linkLabelOf(l) { return (l && l.label && l.label.trim()) ? l.label.trim() : urlAutoLabel(l && l.url); }
+
+// ---- ② Claudeリンク：Androidスマホではアプリ（intent://）で開く。失敗時はブラウザにフォールバック ----
+function isAndroidUA() { try { return /Android/i.test(navigator.userAgent || ""); } catch { return false; } }
+function claudeIntentUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!/(^|\.)claude\.ai$/i.test(u.hostname)) return null;
+    return "intent://" + u.hostname + u.pathname + u.search +
+      "#Intent;scheme=https;package=com.anthropic.claude;S.browser_fallback_url=" + encodeURIComponent(url) + ";end";
+  } catch { return null; }
+}
 // リンクをどのアイコンで表示するかを返す。ラベル→URLの順で判定。
 function linkIconOf(l) {
   const lab = (l && l.label ? l.label : "").toLowerCase();
@@ -4284,6 +4426,10 @@ const S = {
   delBtn: { display: "flex", alignItems: "center", gap: 5, border: `1px solid #6E3838`, background: "rgba(255,107,107,0.13)", color: "#FF6B6B", borderRadius: 9, padding: "8px 12px", fontSize: 14.5, fontWeight: 700 },
   delConfirm: { display: "flex", alignItems: "center", gap: 7 },
   delText: { fontSize: 14.5, color: C.ink2, fontWeight: 600 },
+  delWarnText: { fontSize: 13, color: "#FF8A8A", fontWeight: 700, width: "100%", lineHeight: 1.5 },
+  undoToast: { position: "fixed", left: 16, bottom: 24, zIndex: 95, display: "flex", alignItems: "center", gap: 10, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 14px", boxShadow: "0 8px 24px rgba(0,0,0,0.5)", maxWidth: "calc(100vw - 110px)" },
+  undoToastText: { color: C.ink2, fontSize: 13.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  undoToastBtn: { border: "none", background: "transparent", color: C.accent, fontWeight: 800, fontSize: 13.5, cursor: "pointer", padding: "4px 6px", flexShrink: 0 },
   delYes: { border: "none", background: "#FF6B6B", color: "#fff", borderRadius: 8, padding: "7px 13px", fontSize: 14.5, fontWeight: 700 },
   delNo: { border: `1px solid ${C.line}`, background: C.panel, borderRadius: 8, padding: "7px 11px", fontSize: 14.5, fontWeight: 600, color: C.ink2 },
 
@@ -4440,6 +4586,7 @@ const S = {
   plLinks: { display: "flex", flexWrap: "wrap", gap: "6px 16px", marginTop: 7 },
   plLink: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 16.5, color: C.ink2, textDecoration: "none", padding: "3px 0", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   plLinkReply: { color: C.accent, fontWeight: 700 },
+  plLinkDragging: { background: C.panel2, borderRadius: 8, padding: "3px 8px", color: C.ink, boxShadow: "0 4px 14px rgba(0,0,0,0.45)" },
   plEmpty: { color: C.ink3, fontSize: 14, textAlign: "center", padding: "40px 0" },
   doneSection: { marginTop: 16 },
   doneGrid: { display: "flex", flexDirection: "column", gap: 8, marginTop: 4 },
