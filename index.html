@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-11a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-14a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -326,6 +326,7 @@ function normalizeProjects(arr) {
       ...p,
       status: STATUS_MIGRATE[p.status] || p.status || "進行中",
       start: p.start ?? "",
+      msgs: Array.isArray(p.msgs) ? p.msgs : [],
       received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
       tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "", note: t.note ?? "", repeat: t.repeat ?? null, doneAt: t.doneAt ?? (t.done ? Date.now() : null) })),
     };
@@ -1147,7 +1148,7 @@ export default function App() {
       <main style={S.main} onTouchStart={onMainTouchStart} onTouchEnd={onMainTouchEnd}>
         {view === "focus" && <FilterChips projects={projects} filter={focusFilter} onChange={setFocusFilter} />}
         {view === "focus" && focusFilter === "registry" && <ProjectListView projects={projects} onOpen={openProject} onReorderLinks={reorderLinks} />}
-        {view === "focus" && focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} onReorderTask={reorderTaskVisual} onMoveTask={moveTaskToProject} sortMode={sortMode} setSortMode={setSortMode} />}
+        {view === "focus" && focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} onReorderTask={reorderTaskVisual} onMoveTask={moveTaskToProject} sortMode={sortMode} setSortMode={setSortMode} onSetStatus={setProjectStatus} />}
         {view === "focus" && focusFilter !== "all" && focusFilter !== "registry" && <TasksView singleLane projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderProject={reorderVisual} onSortManual={() => setSortMode("manual")} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} activeLane={focusFilter} setActiveLane={setFocusFilter} />}
         {view === "calendar" && <CalendarView projects={projects} onOpen={openProject} />}
       </main>
@@ -1209,7 +1210,7 @@ export default function App() {
 /* ============================================================
    フォーカス（ダッシュボード）
    ============================================================ */
-function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, onReorderTask, onMoveTask, sortMode, setSortMode }) {
+function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, onReorderTask, onMoveTask, sortMode, setSortMode, onSetStatus }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
 
@@ -1509,7 +1510,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                           <span style={{ ...S.focusGroupCount, color: g.color }}>{g.items.length}</span>
                         </div>
                       )}
-                      {g.items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} onTaskDrag={startTaskDrag} taskDragId={dragTaskId} />)}
+                      {g.items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} onTaskDrag={startTaskDrag} taskDragId={dragTaskId} onSetStatus={onSetStatus} />)}
                     </React.Fragment>
                   );
                 });
@@ -1616,7 +1617,10 @@ function ProjectsView({ projects, onOpen }) {
   );
 }
 
-function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onToggleTask, onToggleProject, onDragHandle, dragging, dragActive, onTaskDrag, taskDragId }) {
+function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onToggleTask, onToggleProject, onDragHandle, dragging, dragActive, onTaskDrag, taskDragId, onSetStatus }) {
+  // ステータスの確信度（✓一致／?不明／⚠矛盾）と提案バー
+  const sug = statusSuggestion(p);
+  const [sugDismiss, setSugDismiss] = useState(false);
   // タスク行の長押し（300ms）でドラッグ開始
   const tLp = useRef(null); const tDown = useRef(null);
   const tRowDown = (e, tid) => {
@@ -1683,6 +1687,9 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
           <span style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
             <span style={{ ...S.cardCompany, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{p.company || "（無題）"}</span>
             <StatusIcon status={p.status} />
+            {sug && sug.mark === "ok" && <Check size={13} color="#51CF66" strokeWidth={3} style={{ flexShrink: 0 }} />}
+            {sug && sug.mark === "warn" && <AlertTriangle size={13} color="#D9A23B" strokeWidth={2.6} style={{ flexShrink: 0 }} />}
+            {sug && sug.mark === "unknown" && <span style={S.trustUnknown} title="ログ未登録または古いため判定できません">?</span>}
           </span>
           {!dragActive && (st || dl) && (
             <span style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
@@ -1712,6 +1719,14 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
         )}
       </div>
 
+      {!dragActive && sug && sug.mark === "warn" && sug.suggest && !sugDismiss && (
+        <div style={S.suggestBar} onPointerDown={stop} onClick={stop}>
+          <AlertTriangle size={13} color="#D9A23B" strokeWidth={2.4} style={{ flexShrink: 0 }} />
+          <span style={S.suggestText}>{sug.reason}。「{sug.suggest}」ではありませんか？</span>
+          <button style={S.suggestBtn} onClick={(e) => { stop(e); onSetStatus && onSetStatus(p.id, sug.suggest); }}>{sug.suggest}にする</button>
+          <button style={S.suggestX} title="この提案を隠す" onClick={(e) => { stop(e); setSugDismiss(true); }}><X size={13} strokeWidth={2.2} /></button>
+        </div>
+      )}
       {!dragActive && showTasks.length > 0 && (
         <div style={S.cardTaskList}>
           {showTasks.map((t) => (
@@ -2467,6 +2482,89 @@ function AddTaskInline({ projects, onAdd, onCancel }) {
 /* ============================================================
    詳細・編集ドロワー
    ============================================================ */
+// ==================== やり取りログ欄（Drawer内） ====================
+function LogSection({ d, onChange }) {
+  const [paste, setPaste] = useState("");
+  const [msg, setMsg] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const msgs = d.msgs || [];
+  const doImport = () => {
+    const text = paste.trim(); if (!text || importing) return;
+    setImporting(true);
+    try {
+      const { entries, src } = parsePastedLog(text, d.company);
+      const { list, added, upgraded } = mergeLogEntries(msgs, entries, src);
+      onChange(list);
+      setPaste("");
+      const parts = [];
+      if (added) parts.push(`${added}件を追加しました`);
+      if (upgraded) parts.push(`${upgraded}件を全文に更新`);
+      if (!added && !upgraded) parts.push("新しいメッセージはありませんでした（すべて登録済み）");
+      if (entries.some((e) => e.partial)) parts.push("※「…」で省略された本文があります。折りたたみを開いてコピーすると全文が入ります");
+      if (src === "plain") parts.push("※形式を判定できなかったため1件のメモとして保存しました");
+      setMsg(parts.join("。"));
+    } finally { setImporting(false); }
+  };
+  const consult = async () => {
+    const ok = await copyText(buildClaudeContext(d));
+    const link = claudeProjectLinkOf(d);
+    if (link) {
+      setMsg(ok ? "案件の文脈をコピーしました。開いたプロジェクトで新規チャットに貼り付けてください" : "コピーに失敗しました");
+      const iu = isAndroidUA() ? claudeIntentUrl(link.url) : null;
+      if (iu) window.location.href = iu; else window.open(link.url, "_blank", "noopener");
+    } else {
+      setMsg(ok ? "案件の文脈をコピーしました。Claudeの新規チャットに貼り付けてください（リンク欄にclaude.aiプロジェクトのURLを登録すると自動で開きます）" : "コピーに失敗しました");
+    }
+  };
+  const shown = showAll ? msgs : msgs.slice(-4);
+  const lastClient = [...msgs].reverse().find((m) => m.who === "client");
+  const weight = lastClient ? classifyReplyWeight(lastClient.body) : null;
+  const lastIsClient = msgs.length > 0 && msgs[msgs.length - 1].who === "client";
+  return (
+    <>
+      <div style={S.subtaskHead}>
+        <MessageCircle size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
+        <span style={S.subtaskHeadLabel}>やり取りログ</span>
+        <button style={S.logConsultBtn} onClick={consult} title="案件の文脈をコピーしてClaudeで相談">
+          <Sparkles size={13} strokeWidth={2.4} />Claudeで相談
+        </button>
+      </div>
+      <div style={S.logWrap}>
+        {lastIsClient && weight && (
+          <div style={S.logBadge}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: weight === "claude" ? C.accent : "#51CF66", flexShrink: 0 }} />
+            {weight === "claude" ? "内容が重ため：Claudeでの相談がおすすめ" : "Helmの返信アシストで返せそうです"}
+          </div>
+        )}
+        {msgs.length > 4 && !showAll && (
+          <button style={S.logShowAll} onClick={() => setShowAll(true)}>すべて表示（{msgs.length}件）</button>
+        )}
+        {shown.map((m) => (
+          <div key={m.id} style={{ ...S.logItem, ...(m.who === "me" ? S.logItemMe : {}) }}>
+            <div style={S.logMeta}>
+              <span>{m.who === "me" ? "自分" : (m.name || "相手")}</span>
+              <span>{fmtLogAt(m.at)}</span>
+              {m.partial && <span style={{ color: "#D9A23B" }}>一部省略</span>}
+              <button style={S.logDel} title="このログを削除"
+                onClick={() => onChange(msgs.filter((x) => x.id !== m.id))}>
+                <X size={13} strokeWidth={2.2} />
+              </button>
+            </div>
+            <div style={S.logBody}>{m.body}</div>
+          </div>
+        ))}
+        <textarea style={S.logPaste} value={paste} placeholder="メッセージ画面を全選択コピーして貼り付け（CW／ランサーズ／Chatwork対応。重複は自動で除外）"
+          onChange={(e) => setPaste(e.target.value)} />
+        {paste.trim() && (
+          <button style={S.logImportBtn} onClick={doImport}>取り込む</button>
+        )}
+        {msg && <div style={S.logMsg}>{msg}</div>}
+      </div>
+    </>
+  );
+}
+
 function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, confirmDel, onConfirmDelete, onCancelDelete }) {
   const [d, setD] = useState(draft);
   const [generating, setGenerating] = useState(false);
@@ -2845,6 +2943,11 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
             <Link2 size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
             <LinksField links={d.links} onChange={(v) => set("links", v)} />
           </div>
+
+          {/* ===== やり取りログ ===== */}
+          {!isNew && d.id !== INBOX_ID && (
+            <LogSection d={d} onChange={(v) => set("msgs", v)} />
+          )}
 
           {/* ===== tasks ===== */}
           <div style={S.subtaskHead}>
@@ -3789,6 +3892,230 @@ function claudeIntentUrl(url) {
       "#Intent;scheme=https;package=com.anthropic.claude;S.browser_fallback_url=" + encodeURIComponent(url) + ";end";
   } catch { return null; }
 }
+
+// ==================== やり取りログ（Phase 1） ====================
+// msg = { id, at:"YYYY-MM-DD HH:mm"（不明なら""）, who:"me"|"client"|"", name, body, src, partial }
+const ME_NAMES = ["Infosuccess", "インフォサクセス"];
+const isMeName = (s) => ME_NAMES.some((n) => (s || "").startsWith(n));
+const normBody = (s) => (s || "").replace(/\s+/g, " ").trim();
+const fmtLogAt = (at) => {
+  if (!at) return "日時不明";
+  const m = at.match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}:\d{2}))?/);
+  return m ? `${+m[2]}/${+m[3]}${m[4] ? " " + m[4] : ""}` : at;
+};
+
+// --- クラウドワークス形式 ---
+function parseCWLog(text, clientHint) {
+  const lines = text.split(/\r?\n/).map((s) => s.trim());
+  const dateRe = /^(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})$/;
+  let client = "";
+  for (const ln of lines) { const m = ln.match(/^(.+?)さんとの(契約詳細|メッセージ)/); if (m) { client = m[1]; break; } }
+  if (!client) client = clientHint || "";
+  const noise = /^(問題報告|スター付きメッセージ一覧|メッセージを探す|違反報告をする|テンプレートを作成|新着メッセージの通知設定をする|ここにメッセージ|選択されていません|送信)$/;
+  const mkAt = (m) => `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")} ${String(m[4]).padStart(2, "0")}:${m[5]}`;
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const dm = lines[i].match(dateRe);
+    if (!dm) continue;
+    const prev = lines[i - 1] || "";
+    const nameOnly = ME_NAMES.includes(prev) || (client && prev === client);
+    if (nameOnly) {
+      // 展開形式：名前行→日付行→本文（次ブロックまで）
+      const body = [];
+      for (let j = i + 1; j < lines.length; j++) {
+        const l = lines[j];
+        if (!l) { if (body.length) body.push(""); continue; }
+        if (noise.test(l) || dateRe.test(l)) break;
+        if (dateRe.test(lines[j + 1] || "") && (isMeName(l) || (client && l.startsWith(client)))) break;
+        body.push(l);
+      }
+      const b = body.join("\n").trim();
+      if (b) out.push({ who: isMeName(prev) ? "me" : "client", name: prev, at: mkAt(dm), body: b, partial: false });
+    } else if (prev && !noise.test(prev)) {
+      // 折りたたみ形式：名前＋本文（省略あり）→日付行
+      let who = "", name = "", body = prev;
+      if (isMeName(prev)) { who = "me"; for (const n of ME_NAMES) { if (prev.startsWith(n)) { name = n; body = prev.slice(n.length); break; } } }
+      else if (client && prev.startsWith(client)) { who = "client"; name = client; body = prev.slice(client.length); }
+      if (!who) continue; // 名前を特定できない行はスキップ
+      const partial = /(\.\.\.|…)$/.test(body);
+      body = body.replace(/(\.\.\.|…)$/, "").trim();
+      if (body) out.push({ who, name, at: mkAt(dm), body, partial });
+    }
+  }
+  return { entries: out, client };
+}
+
+// --- ランサーズ形式 ---
+function parseLancersLog(text) {
+  const lines = text.split(/\r?\n/).map((s) => s.trim());
+  const dayRe = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/;
+  const timeRe = /^(\d{1,2}):(\d{2})$/;
+  const iconRe = /のアイコン$/;
+  const stopRe = /^(開封済み|メッセージを入力してください|送信|保存|ビデオ通話|情報)$/;
+  let curDay = "";
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const dm = lines[i].match(dayRe);
+    if (dm) { curDay = `${dm[1]}-${String(dm[2]).padStart(2, "0")}-${String(dm[3]).padStart(2, "0")}`; continue; }
+    const tm = (lines[i + 1] || "").match(timeRe);
+    if (tm && lines[i] && !iconRe.test(lines[i]) && !timeRe.test(lines[i]) && !stopRe.test(lines[i]) && lines[i].length <= 60) {
+      const rawName = lines[i];
+      const name = rawName.replace(/\(.+?\)$/, "").trim();
+      const who = isMeName(rawName) || isMeName(name) ? "me" : "client";
+      const body = [];
+      for (let j = i + 2; j < lines.length; j++) {
+        const l = lines[j];
+        if (l === "") { if (body.length) body.push(""); continue; }
+        if (iconRe.test(l) || dayRe.test(l) || stopRe.test(l)) break;
+        if (timeRe.test(lines[j + 1] || "") && l.length <= 60 && !/[。、]/.test(l)) break; // 次の名前行らしき行
+        body.push(l);
+      }
+      const b = body.join("\n").trim();
+      const at = curDay ? `${curDay} ${String(tm[1]).padStart(2, "0")}:${tm[2]}` : "";
+      if (b) out.push({ who, name, at, body: b, partial: false });
+      i = i + 1;
+    }
+  }
+  return { entries: out, client: "" };
+}
+
+// --- Chatwork形式（PCブラウザの範囲コピー想定・汎用） ---
+function parseChatworkLog(text) {
+  const cleaned = text.replace(/\[rp aid=\d+ to=[\d-]+\]/g, "").replace(/\[To:\d+\]/g, "");
+  const lines = cleaned.split(/\r?\n/).map((s) => s.trim());
+  const headRe = /^(.{1,40}?)\s+(?:(\d{4})[\/年])?(\d{1,2})[\/月](\d{1,2})日?(?:\([月火水木金土日]\))?\s+(\d{1,2}):(\d{2})$/;
+  const out = [];
+  let cur = null;
+  const push = () => { if (cur && cur.body.length) { out.push({ ...cur, body: cur.body.join("\n").trim(), partial: false }); } cur = null; };
+  for (const l of lines) {
+    const m = l.match(headRe);
+    if (m) {
+      push();
+      const y = m[2] || String(new Date().getFullYear());
+      cur = { who: isMeName(m[1]) ? "me" : "client", name: m[1].trim(),
+        at: `${y}-${String(m[3]).padStart(2, "0")}-${String(m[4]).padStart(2, "0")} ${String(m[5]).padStart(2, "0")}:${m[6]}`, body: [] };
+    } else if (cur && l) { cur.body.push(l); }
+  }
+  push();
+  return { entries: out.filter((e) => e.body), client: "" };
+}
+
+// --- 形式自動判定 ---
+function parsePastedLog(text, clientHint) {
+  const t = (text || "").trim();
+  if (!t) return { entries: [], src: "plain" };
+  if (/さんとの契約詳細|クラウドワークス/.test(t) || /^\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2}$/m.test(t)) {
+    const r = parseCWLog(t, clientHint);
+    if (r.entries.length) return { entries: r.entries, src: "cw" };
+  }
+  if (/のアイコン$/m.test(t) || /ランサーズ/.test(t)) {
+    const r = parseLancersLog(t);
+    if (r.entries.length) return { entries: r.entries, src: "lancers" };
+  }
+  { const r = parseChatworkLog(t); if (r.entries.length >= 2) return { entries: r.entries, src: "chatwork" }; }
+  { const r = parseCWLog(t, clientHint); if (r.entries.length) return { entries: r.entries, src: "cw" }; }
+  { const r = parseLancersLog(t); if (r.entries.length) return { entries: r.entries, src: "lancers" }; }
+  // 判定不能：1件のメモとして保存
+  const now = new Date();
+  const at = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  return { entries: [{ who: "", name: "貼り付けメモ", at, body: t, partial: false }], src: "plain" };
+}
+
+// --- 重複除去マージ（省略コピー→全文への昇格つき） ---
+function mergeLogEntries(existing, incoming, src) {
+  const list = existing.map((m) => ({ ...m }));
+  let added = 0, upgraded = 0;
+  for (const inc of incoming) {
+    const nb = normBody(inc.body);
+    const dup = list.findIndex((m) => {
+      const mb = normBody(m.body);
+      const sameAt = m.at && inc.at ? m.at === inc.at : true;
+      if (!sameAt) return false;
+      if (mb === nb) return true;
+      if (m.partial && nb.startsWith(mb.slice(0, Math.max(10, mb.length)))) return true;
+      if (inc.partial && mb.startsWith(nb.slice(0, Math.max(10, nb.length)))) return true;
+      return false;
+    });
+    if (dup >= 0) {
+      if (list[dup].partial && !inc.partial) {
+        list[dup] = { ...list[dup], body: inc.body, partial: false, who: inc.who || list[dup].who, name: inc.name || list[dup].name, at: inc.at || list[dup].at };
+        upgraded++;
+      }
+      continue;
+    }
+    list.push({ id: uid(), src, ...inc });
+    added++;
+  }
+  list.sort((a, b) => ((a.at || "9999") < (b.at || "9999") ? -1 : 1));
+  return { list, added, upgraded };
+}
+
+// --- ステータスの確信度（✓一致／?不明／⚠矛盾＋提案） ---
+function statusSuggestion(p) {
+  if (!p || p.id === INBOX_ID || p.status === "完了") return null;
+  const msgs = (p.msgs || []).filter((m) => (m.who === "me" || m.who === "client") && m.at);
+  if (!msgs.length) return { mark: "unknown" };
+  const last = msgs[msgs.length - 1];
+  const days = Math.round((TODAY.getTime() - new Date(last.at.slice(0, 10) + "T00:00:00").getTime()) / 86400000);
+  if (!isFinite(days) || days > 14) return { mark: "unknown" };
+  if (last.who === "client") {
+    if (p.status === "相手待ち") return { mark: "warn", suggest: "進行中", reason: "相手からメッセージが来ています" };
+    if (p.status === "支払い待ち" && !/(支払|入金|振込|検収)/.test(last.body)) return { mark: "warn", suggest: "進行中", reason: "相手からメッセージが来ています" };
+    return { mark: "ok" };
+  }
+  if (p.status === "進行中" && (p.tasks || []).filter((t) => !t.done).length === 0 && days >= 1) {
+    return { mark: "warn", suggest: "相手待ち", reason: "返信済みで未完了タスクがありません" };
+  }
+  return { mark: "ok" };
+}
+
+// --- 振り分け（ルールベース）：Helmで返せる／claude.ai相談推奨 ---
+function classifyReplyWeight(body) {
+  const b = body || "";
+  const heavy = /(構成|見直|再検討|方針|全面|作り直|修正案|お見積|見積り|見積も|金額|値上|値下|交渉|契約変更|クレーム|トラブル|仕様|設計|要件|リライト)/;
+  return b.length > 400 || heavy.test(b) ? "claude" : "helm";
+}
+
+// --- Claude相談用の文脈テキスト生成 ---
+function buildClaudeContext(p) {
+  const lines = [];
+  lines.push(`【案件】${p.company || "（無題）"}（${p.platform || ""}）`);
+  const meta = [`ステータス：${p.status || ""}`];
+  if (p.deadline) meta.push(`納期：${p.deadline}`);
+  if (Number(p.reward) > 0) meta.push(`報酬：${yen(Number(p.reward))}`);
+  lines.push(meta.join("／"));
+  const open = (p.tasks || []).filter((t) => !t.done);
+  if (open.length) lines.push("未完了タスク：" + open.map((t) => t.title + (t.due ? `（期限${t.due.slice(5).replace("-", "/")}）` : "")).join("、"));
+  if (p.note && p.note.trim()) lines.push("メモ：\n" + p.note.trim());
+  const msgs = p.msgs || [];
+  if (msgs.length) {
+    const LIMIT = 8000;
+    let used = 0; const chunk = [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      const s = `[${fmtLogAt(m.at)}] ${m.who === "me" ? "自分" : (m.name || "相手")}：${m.body}${m.partial ? "（※一部省略コピー）" : ""}`;
+      if (used + s.length > LIMIT && chunk.length) { chunk.push("（これより古いログは省略）"); break; }
+      used += s.length; chunk.push(s);
+    }
+    lines.push("\n--- クライアントとのやり取り（時系列） ---");
+    chunk.reverse().forEach((s) => lines.push(s));
+  }
+  lines.push("\n上記の案件について相談します。");
+  return lines.join("\n");
+}
+
+const claudeProjectLinkOf = (p) => ((p && p.links) || []).find((l) => /claude\.ai\/project\//.test(l.url || ""));
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta); return ok;
+  } catch { return false; }
+}
 // リンクをどのアイコンで表示するかを返す。ラベル→URLの順で判定。
 function linkIconOf(l) {
   const lab = (l && l.label ? l.label : "").toLowerCase();
@@ -4587,6 +4914,25 @@ const S = {
   plLink: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 16.5, color: C.ink2, textDecoration: "none", padding: "3px 0", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   plLinkReply: { color: C.accent, fontWeight: 700 },
   plLinkDragging: { background: C.panel2, borderRadius: 8, padding: "3px 8px", color: C.ink, boxShadow: "0 4px 14px rgba(0,0,0,0.45)" },
+  // やり取りログ（Phase 1）
+  logWrap: { display: "flex", flexDirection: "column", gap: 8, margin: "2px 0 14px 31px" },
+  logConsultBtn: { marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, border: "none", borderRadius: 9, background: "rgba(107,138,255,0.16)", color: C.accent, fontWeight: 700, fontSize: 13, padding: "7px 11px", cursor: "pointer" },
+  logItem: { display: "flex", flexDirection: "column", gap: 3, padding: "8px 11px", borderRadius: 10, background: C.panel2 },
+  logItemMe: { background: "rgba(107,138,255,0.09)" },
+  logMeta: { display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: C.ink3, fontWeight: 600 },
+  logDel: { marginLeft: "auto", border: "none", background: "transparent", color: C.ink3, cursor: "pointer", padding: 2, display: "inline-flex" },
+  logBody: { fontSize: 14, color: C.ink2, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 },
+  logPaste: { width: "100%", boxSizing: "border-box", minHeight: 62, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 10, color: C.ink, fontSize: 14, padding: "9px 11px", outline: "none", resize: "vertical", fontFamily: "inherit" },
+  logImportBtn: { alignSelf: "flex-end", border: "none", borderRadius: 9, background: C.accent, color: "#0F1318", fontWeight: 800, fontSize: 13, padding: "8px 16px", cursor: "pointer" },
+  logMsg: { fontSize: 12.5, color: C.ink3, lineHeight: 1.5 },
+  logShowAll: { alignSelf: "flex-start", border: "none", background: "transparent", color: C.ink3, fontSize: 12.5, fontWeight: 700, cursor: "pointer", padding: "2px 0" },
+  logBadge: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: C.ink2 },
+  // ステータス確信度・提案バー
+  trustUnknown: { flexShrink: 0, width: 15, height: 15, borderRadius: "50%", background: C.panel2, color: C.ink3, fontSize: 10.5, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 },
+  suggestBar: { display: "flex", alignItems: "center", gap: 7, marginTop: 9, padding: "7px 9px", borderRadius: 9, background: "rgba(217,162,59,0.10)" },
+  suggestText: { flex: 1, minWidth: 0, fontSize: 13, color: "#D9A23B", fontWeight: 600, lineHeight: 1.4 },
+  suggestBtn: { flexShrink: 0, border: "none", borderRadius: 8, background: "rgba(217,162,59,0.18)", color: "#D9A23B", fontWeight: 800, fontSize: 12.5, padding: "6px 10px", cursor: "pointer" },
+  suggestX: { flexShrink: 0, border: "none", background: "transparent", color: C.ink3, cursor: "pointer", padding: 3, display: "inline-flex" },
   plEmpty: { color: C.ink3, fontSize: 14, textAlign: "center", padding: "40px 0" },
   doneSection: { marginTop: 16 },
   doneGrid: { display: "flex", flexDirection: "column", gap: 8, marginTop: 4 },
