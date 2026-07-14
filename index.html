@@ -69,12 +69,18 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-14e"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-14h"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
 const AGENT_GAS_URL = "https://script.google.com/macros/s/AKfycbyIMxJlaI626Rh4M2LSM0o63VSAGp8rKtWB_gzt0wvTD_6GnZdbX75okpXqPkrcvtmt/exec";
 const AGENT_TOKEN   = "973b2ec9a7d44575b09ed3c127a61aec";
+
+// ==================== Chatworkメッセージ自動取得（Phase 2） ====================
+// リンク欄に chatwork.com/#!ridXXXX のURLがある案件のログ欄へ、GAS経由で自動追記する。
+// CW_FETCH_URL が https で始まらない間は無効（GASデプロイ後にURLを設定して再ビルド）。
+const CW_FETCH_URL = "https://script.google.com/macros/s/AKfycbxGSlU-4BhamAmMCfHQXb36gyIWCKFBWw2KsStlkiGIayEFH7NDsUl862YQDK9Qp0dI/exec";
+const CW_FETCH_TOKEN = "helm-cw-9k4w";
 const TODAY = new Date(); TODAY.setHours(0, 0, 0, 0);
 
 // ===== 端末間同期（GAS Web App + スプレッドシート） =====
@@ -655,6 +661,52 @@ export default function App() {
       }
     } catch {}
   }, []);
+  // Chatwork自動取得：リンク欄のルームURLから対象を特定し、5分おき＋復帰時に新着をログ欄へ追記
+  const editingRef2 = useRef(null);
+  useEffect(() => { editingRef2.current = editing; }, [editing]);
+  useEffect(() => {
+    if (!/^https:\/\//.test(CW_FETCH_URL)) return;
+    let stopped = false;
+    const pull = async () => {
+      if (stopped || editingRef2.current) return; // 編集中は上書き事故を避けるためスキップ
+      try {
+        const ps = projectsRef.current || [];
+        const ridMap = {};
+        ps.forEach((p) => (p.links || []).forEach((l) => {
+          const m = (l.url || "").match(/chatwork\.com\/#!rid(\d+)/);
+          if (m) ridMap[m[1]] = p.id;
+        }));
+        const rids = Object.keys(ridMap);
+        if (!rids.length) return;
+        const res = await fetch(`${CW_FETCH_URL}?action=msgs&t=${encodeURIComponent(CW_FETCH_TOKEN)}&rooms=${rids.join(",")}`);
+        const data = await res.json();
+        if (!data.ok || !Array.isArray(data.msgs)) return;
+        const byPid = {};
+        data.msgs.forEach((m) => {
+          if (m.error || !m.body) return;
+          const pid = ridMap[String(m.rid)];
+          if (!pid) return;
+          (byPid[pid] = byPid[pid] || []).push({ who: m.me ? "me" : "client", name: m.name || "", at: m.at || "", body: m.body, partial: false });
+        });
+        if (!Object.keys(byPid).length) return;
+        let changed = false;
+        const next = (projectsRef.current || []).map((p) => {
+          const inc = byPid[p.id];
+          if (!inc) return p;
+          const merged = mergeLogEntries(p.msgs || [], inc, "chatwork");
+          if (merged.added > 0 || merged.upgraded > 0) { changed = true; return { ...p, msgs: merged.list }; }
+          return p;
+        });
+        if (changed && !stopped && !editingRef2.current) persist(next);
+      } catch {}
+    };
+    const t0 = setTimeout(pull, 4000); // 起動直後は同期の取り込みを待ってから
+    const iv = setInterval(pull, 5 * 60 * 1000);
+    const onVis = () => { if (document.visibilityState === "visible") pull(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { stopped = true; clearTimeout(t0); clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+
   // PWA化：manifestリンクとService Worker（キャッシュしない＝古い版を残さない）を登録
   useEffect(() => {
     try {
@@ -3975,7 +4027,7 @@ function claudeIntentUrl(url) {
 
 // ==================== やり取りログ（Phase 1） ====================
 // msg = { id, at:"YYYY-MM-DD HH:mm"（不明なら""）, who:"me"|"client"|"", name, body, src, partial }
-const ME_NAMES = ["Infosuccess", "インフォサクセス"];
+const ME_NAMES = ["Infosuccess", "インフォサクセス", "高崎"];
 const isMeName = (s) => ME_NAMES.some((n) => (s || "").startsWith(n));
 const normBody = (s) => (s || "").replace(/\s+/g, " ").trim();
 const fmtLogAt = (at) => {
@@ -4064,6 +4116,52 @@ function parseLancersLog(text) {
   return { entries: out, client: "" };
 }
 
+// --- Chatwork Web形式（PCブラウザの全選択コピー） ---
+// 構造: "2026年6月17日"（日付見出し）→ 名前が2行連続 → 本文 → 末尾に "6月17日 14:51"（時刻行）
+// 連投時は2通目以降の名前が省略される。リアクション(bow等＋数字)・返信元・ルーム一覧はノイズ。
+function parseChatworkWebLog(text) {
+  const lines = text.split(/\r?\n/).map((s) => s.trim());
+  const secRe = /^(\d{4})年(\d{1,2})月(\d{1,2})日$/;
+  const tsRe = /^(?:(\d{1,2})月(\d{1,2})日\s+)?(\d{1,2}):(\d{2})$/;
+  const emojiRe = /^(bow|roger|clap|beer|smile|lol|please|dance|yes|no|sweat|blush|whew|cracker|star|flex|h|shake|devil|heart)$/i;
+  let i = lines.findIndex((l) => secRe.test(l));
+  if (i < 0) return { entries: [] };
+  let year = null, curM = null, curD = null;
+  const out = [];
+  let buf = [];
+  for (; i < lines.length; i++) {
+    const l = lines[i];
+    const sm = l.match(secRe);
+    if (sm) { year = +sm[1]; curM = +sm[2]; curD = +sm[3]; buf = []; continue; }
+    if (/^Loadingメッセージを読み込んでいます/.test(l)) { buf = []; continue; }
+    const tm = l.match(tsRe);
+    if (tm && buf.filter(Boolean).length) {
+      const M = tm[1] ? +tm[1] : curM, D = tm[2] ? +tm[2] : curD;
+      const at = year && M && D ? `${year}-${String(M).padStart(2, "0")}-${String(D).padStart(2, "0")} ${String(tm[3]).padStart(2, "0")}:${tm[4]}` : "";
+      const b = buf.filter((x) => x !== "返信元");
+      while (b.length && !b[0]) b.shift(); // 先頭の空行を除去（名前検出のため）
+      let name = "", bodyLines;
+      if (b[1] !== undefined && b[0] && b[0].length <= 45 && b[1] && b[1].startsWith(b[0])) {
+        name = b[0]; bodyLines = b.slice(2); // 名前2行連続パターン
+      } else if (out.length) {
+        name = out[out.length - 1].name; bodyLines = b; // 連投（名前省略）→ 直前の発言者
+      } else {
+        name = b[0] || ""; bodyLines = b.slice(1);
+      }
+      while (bodyLines.length && (emojiRe.test(bodyLines[bodyLines.length - 1]) || /^\d{1,3}$/.test(bodyLines[bodyLines.length - 1]) || bodyLines[bodyLines.length - 1] === "")) bodyLines.pop();
+      const body = bodyLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+      const cleanName = name.replace(/株式会社.*$/, "").trim();
+      if (cleanName && body) {
+        out.push({ who: isMeName(cleanName) ? "me" : "client", name: cleanName, at, body, partial: false });
+      }
+      buf = [];
+      continue;
+    }
+    buf.push(l);
+  }
+  return { entries: out };
+}
+
 // --- Chatwork形式（PCブラウザの範囲コピー想定・汎用） ---
 function parseChatworkLog(text) {
   const cleaned = text.replace(/\[rp aid=\d+ to=[\d-]+\]/g, "").replace(/\[To:\d+\]/g, "");
@@ -4089,6 +4187,11 @@ function parseChatworkLog(text) {
 function parsePastedLog(text, clientHint) {
   const t = (text || "").trim();
   if (!t) return { entries: [], src: "plain" };
+  // Chatwork Web：日付のみの見出し行（例 2026年6月17日）＋末尾時刻行（例 6月17日 14:51）
+  if (/^\d{4}年\d{1,2}月\d{1,2}日$/m.test(t) && /^\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2}$/m.test(t)) {
+    const r = parseChatworkWebLog(t);
+    if (r.entries.length) return { entries: r.entries, src: "chatwork" };
+  }
   if (/さんとの契約詳細|クラウドワークス/.test(t) || /^\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2}$/m.test(t)) {
     const r = parseCWLog(t, clientHint);
     if (r.entries.length) return { entries: r.entries, src: "cw" };
