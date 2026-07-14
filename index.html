@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-14h"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-14i"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -4256,6 +4256,11 @@ function statusSuggestion(p) {
     if (p.status === "相手待ち") return { mark: "warn", suggest: "進行中", reason: "相手からメッセージが来ています" };
     if (p.status === "支払い待ち" && !/(支払|入金|振込|検収)/.test(last.body)) return { mark: "warn", suggest: "進行中", reason: "相手からメッセージが来ています" };
     return { mark: "ok" };
+  }
+  // 自分の最後の発言が「こちらが対応する約束」なら、相手待ちではなく自分のターン
+  const commitRe = /(改めて(ご連絡|お送り|ご報告|提出|ご案内)|(完了|でき|出来|上がり)次第[^。]{0,20}(連絡|送り|報告|共有|反映|入れ込み)|(修正|作成|反映|実装|更新|調整)し(、|て)[^。]{0,25}(お送り|提出|ご連絡|ご報告|参ります|まいります)|本日中に(対応|提出|お送り|ご連絡)|(修正|対応|作成)を?進めます)/;
+  if ((p.status === "相手待ち" || p.status === "支払い待ち") && commitRe.test(last.body || "")) {
+    return { mark: "warn", suggest: "進行中", reason: "最後の返信に「こちらが対応する」旨の記載があります" };
   }
   if (p.status === "進行中" && (p.tasks || []).filter((t) => !t.done).length === 0 && days >= 1) {
     return { mark: "warn", suggest: "相手待ち", reason: "返信済みで未完了タスクがありません" };
