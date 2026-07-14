@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-14q"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-14s"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -465,7 +465,7 @@ const dueItemsOf = (p) => {
 };
 
 /* Claude呼び出し。APIキーがあればブラウザ直アクセス（HTML版）、なければプロキシ（Claudeアプリ版） */
-async function callClaude({ system, user, maxTokens = 1000 }) {
+async function callClaude({ system, user, maxTokens = 1000, model = "claude-sonnet-4-6" }) {
   let apiKey = "";
   try { const r = await window.storage.get("cockpit:apikey"); apiKey = (r && r.value) || ""; } catch {}
   const headers = { "Content-Type": "application/json" };
@@ -476,7 +476,7 @@ async function callClaude({ system, user, maxTokens = 1000 }) {
   }
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST", headers,
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }),
+    body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }),
   });
   if (!res.ok) throw new Error("API " + res.status);
   const data = await res.json();
@@ -736,7 +736,7 @@ export default function App() {
         persist(cur.map((p) => p.id !== target.id ? p : {
           ...p, tsqSeen: cm.id,
           tsq: t.has && t.title ? { srcId: cm.id, title: String(t.title).slice(0, 40), note: String(t.note || ""), due: /^\d{4}-\d{2}-\d{2}$/.test(t.due || "") ? t.due : "" } : null,
-          rsug: (j.reply && String(j.reply).trim()) ? { srcId: cm.id, text: String(j.reply).trim() } : null,
+          rsug: (j.reply && String(j.reply).trim() && classifyReplyWeight(cm.body || "") !== "claude") ? { srcId: cm.id, text: String(j.reply).trim() } : null,
         }));
       } catch (e) {
         const msg = String((e && e.message) || e);
@@ -1132,6 +1132,15 @@ export default function App() {
   // カードから返信案を消す／その場で生成する
   const clearRsug = (pid) =>
     persist((projectsRef.current || []).map((p) => p.id !== pid ? p : { ...p, rsug: null }));
+  const markSent = (pid, text) => {
+    const now = new Date();
+    const at = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    persist((projectsRef.current || []).map((p) => p.id !== pid ? p : {
+      ...p,
+      msgs: [...(p.msgs || []), { id: uid(), who: "me", name: "高崎", at, body: text, src: "sent", partial: false }],
+      rsug: null,
+    }));
+  };
   const saveRsug = (pid, text) => {
     const p = (projectsRef.current || []).find((x) => x.id === pid);
     const cm = p ? [...(p.msgs || [])].reverse().find((m) => m.who === "client" && m.id) : null;
@@ -1354,7 +1363,7 @@ export default function App() {
       {replyFor && (() => {
         const p = projects.find((x) => x.id === replyFor);
         if (!p) return null;
-        return <ReplySheet project={p} onClose={goBack} onSaveRsug={saveRsug} />;
+        return <ReplySheet project={p} onClose={goBack} onSaveRsug={saveRsug} onMarkSent={markSent} />;
       })()}
 
       {/* ===== 右下フローティング＋ボタン（Googleカレンダー方式） ===== */}
@@ -2665,7 +2674,7 @@ function AddTaskInline({ projects, onAdd, onCancel }) {
    ============================================================ */
 // ==================== 返信アシストシート ====================
 // 直近のメッセージ＋返信候補＋コピー。候補が無ければ開いた瞬間に強制生成。
-function ReplySheet({ project, onClose, onSaveRsug }) {
+function ReplySheet({ project, onClose, onSaveRsug, onMarkSent }) {
   const wide = useWideScreen();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -2673,12 +2682,14 @@ function ReplySheet({ project, onClose, onSaveRsug }) {
   const autoCopied = useRef(false);
   const text = project.rsug ? project.rsug.text : "";
   const genSeq = useRef(0);
-  const gen = async () => {
+  const [showChoice, setShowChoice] = useState(false);
+  const [consultNote, setConsultNote] = useState("");
+  const gen = async (model) => {
     if (busy) return;
     genSeq.current++;
-    setBusy(true); setErr("");
+    setBusy(true); setErr(""); setShowChoice(false);
     try {
-      const draft = await forceReplyDraft(project);
+      const draft = await forceReplyDraft(project, model);
       if (draft) { autoCopied.current = false; onSaveRsug(project.id, draft); }
       else setErr("返信案を生成できませんでした。もう一度お試しください");
     } catch (e) {
@@ -2686,7 +2697,15 @@ function ReplySheet({ project, onClose, onSaveRsug }) {
     }
     setBusy(false);
   };
-  useEffect(() => { if (!text) gen(); }, []);
+  const consult = async () => {
+    const ok = await copyText(buildClaudeContext(project));
+    const link = claudeProjectLinkOf(project);
+    setConsultNote(ok ? (link ? "文脈をコピーしました。開いたプロジェクトの新規チャットに貼り付けてください" : "文脈をコピーしました。Claudeの新規チャットに貼り付けてください（リンク欄にプロジェクトURLを登録すると自動で開きます）") : "コピーに失敗しました");
+    if (link) {
+      const iu = isAndroidUA() ? claudeIntentUrl(link.url) : null;
+      if (iu) window.location.href = iu; else window.open(link.url, "_blank", "noopener");
+    }
+  };
   // 生成が済んだら自動コピー（開いた時点で候補があればそれも自動コピー）
   const [autoNote, setAutoNote] = useState("");
   useEffect(() => {
@@ -2735,15 +2754,50 @@ function ReplySheet({ project, onClose, onSaveRsug }) {
           <div style={{ ...S.rshLabel, marginTop: 12 }}>返信候補</div>
           {busy && <div style={S.rshEmpty}>生成中…</div>}
           {!busy && err && <div style={{ ...S.rshEmpty, color: "#FF8A8A" }}>{err}</div>}
-          {!busy && !err && text && (
+          {!busy && !err && text && !showChoice && (
             <>
               <div style={S.rshDraft}>{text}</div>
               {autoNote && <div style={S.rshNote}>{autoNote}</div>}
             </>
           )}
+          {!busy && (showChoice || !text) && (() => {
+            // 重さ判定：自分の最後の返信以降の相手メッセージをまとめて評価
+            const pending = recent.filter((m) => m.who === "client").map((m) => m.body).join("\n");
+            const heavy = classifyReplyWeight(pending) === "claude";
+            return (
+              <div style={S.rshChoice}>
+                <div style={S.rshJudge}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: heavy ? C.accent : "#51CF66", flexShrink: 0 }} />
+                  {heavy ? "重要な判断（金額・方針・構成など）を含む可能性があります" : "定型的な内容と判定しました"}
+                </div>
+                {heavy ? (
+                  <>
+                    <button style={S.rshChoiceMain} onClick={consult}>
+                      <Sparkles size={14} strokeWidth={2.4} />Claudeで相談する（推奨・プラン内）
+                    </button>
+                    <div style={S.rshChoiceRow}>
+                      <button style={S.rshChoiceSub} onClick={() => gen("claude-opus-4-8")}>Opusで作る（高精度・十数円）</button>
+                      <button style={S.rshChoiceSub} onClick={() => gen("claude-sonnet-4-6")}>Sonnetで作る（約1円）</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <button style={S.rshChoiceMain} onClick={() => gen("claude-sonnet-4-6")}>
+                      <Reply size={14} strokeWidth={2.4} />Sonnetで返信案を作る（推奨・約1円）
+                    </button>
+                    <div style={S.rshChoiceRow}>
+                      <button style={S.rshChoiceSub} onClick={() => gen("claude-opus-4-8")}>Opusで作る</button>
+                      <button style={S.rshChoiceSub} onClick={consult}>Claudeで相談</button>
+                    </div>
+                  </>
+                )}
+                {consultNote && <div style={S.rshNote}>{consultNote}</div>}
+              </div>
+            );
+          })()}
         </div>
         <div style={S.drawerFoot}>
-          <button style={S.rshRegen} onClick={gen} disabled={busy}>
+          <button style={S.rshRegen} onClick={() => setShowChoice(true)} disabled={busy}>
             <Repeat size={14} strokeWidth={2.4} />{busy ? "生成中…" : "作り直す"}
           </button>
           <div style={{ flex: 1 }} />
@@ -2755,6 +2809,11 @@ function ReplySheet({ project, onClose, onSaveRsug }) {
               <ExternalLink size={14} strokeWidth={2.4} />{rlinkLabel}
             </a>
           )}
+          <button style={S.rshSentBtn} disabled={!text || busy}
+            title="この返信文を自分の発言としてログに記録し、返信アシストを消します"
+            onClick={() => { if (text && onMarkSent) { onMarkSent(project.id, text); onClose(); } }}>
+            <CheckCircle2 size={15} strokeWidth={2.4} />送信済みにする
+          </button>
         </div>
       </div>
     </>
@@ -4429,6 +4488,8 @@ function mergeLogEntries(existing, incoming, src) {
     const nb = normBody(inc.body);
     const dup = list.findIndex((m) => {
       const mb = normBody(m.body);
+      // 「送信済みにする」で手動記録した自分の発言は、後からChatwork等で取れた実メッセージと本文一致で統合
+      if (m.src === "sent" && m.who === inc.who && mb === nb) return true;
       const sameAt = m.at && inc.at ? m.at === inc.at : true;
       if (!sameAt) return false;
       if (mb === nb) return true;
@@ -4443,6 +4504,9 @@ function mergeLogEntries(existing, incoming, src) {
       if (list[dup].partial && !inc.partial) {
         list[dup] = { ...list[dup], body: inc.body, partial: false, who: inc.who || list[dup].who, name: inc.name || list[dup].name, at: inc.at || list[dup].at };
         upgraded++;
+      } else if (list[dup].src === "sent" && inc.at) {
+        // 実メッセージで日時・出所を確定
+        list[dup] = { ...list[dup], at: inc.at, src: src, name: inc.name || list[dup].name };
       } else if (!inc.partial && nb.length > exb.length) {
         // 包含関係の重複は長い方（情報が多い方）の本文を採用
         list[dup] = { ...list[dup], body: inc.body };
@@ -4555,12 +4619,12 @@ const replyLinkOf = (p) => {
 };
 
 // 返信シート用：必ず返信文を生成する（「不要」判定はしない）
-async function forceReplyDraft(project) {
+async function forceReplyDraft(project, model = "claude-sonnet-4-6") {
   const recentLog = (project.msgs || []).slice(-12)
     .map((m) => `[${fmtLogAt(m.at)}] ${m.who === "me" ? "自分" : (m.name || "相手")}：${(m.body || "").slice(0, 600)}`)
     .join("\n\n");
   const sys = 'あなたはフリーランス（高崎・屋号インフォサクセス）の返信作成アシスタントです。クライアントとの直近のやり取りログを読み、相手の最新メッセージへの返信文の下書きを作り、JSONだけを出力します。説明やコードブロック記法は付けないこと。\n{"reply":"返信文"}\n規則：必ず返信文を作る（内容が薄くても、お礼・確認・承知の返信を作る）。文体はログ内の自分の返信と同じトーン・改行リズムを厳密に守る（「お世話になっております。」で始め「引き続きよろしくお願いいたします。」等で締める）。依頼への承諾・要点の復唱を簡潔に。自分の最後の返信より後に相手から複数のメッセージが届いている場合は、その全メッセージに対して1通でまとめて返信する（各メッセージの内容に漏れなく応答する）。金額・条件など判断が必要な点は断定せず「確認のうえ改めてご連絡いたします」とする。事実の捏造禁止。今日は' + dStr(0) + '。';
-  const out = await callClaude({ system: sys, user: `案件「${project.company || ""}」の直近のやり取り（時系列）:\n\n${recentLog}`, maxTokens: 800 });
+  const out = await callClaude({ system: sys, user: `案件「${project.company || ""}」の直近のやり取り（時系列）:\n\n${recentLog}`, maxTokens: 800, model });
   const j = JSON.parse(out.replace(/```json|```/g, "").trim());
   return String((j && j.reply) || "").trim();
 }
@@ -5425,6 +5489,12 @@ const S = {
   rshCopyBtn: { display: "inline-flex", alignItems: "center", gap: 6, border: "none", borderRadius: 9, background: C.accent, color: "#0F1318", fontWeight: 800, fontSize: 14, padding: "10px 18px", cursor: "pointer" },
   rshOpenBtn: { display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 8, borderRadius: 9, background: "rgba(107,138,255,0.16)", color: C.accent, fontWeight: 800, fontSize: 14, padding: "10px 14px", textDecoration: "none" },
   rshNote: { fontSize: 12.5, color: "#51CF66", fontWeight: 600 },
+  rshChoice: { display: "flex", flexDirection: "column", gap: 8, padding: "11px 13px", borderRadius: 11, background: C.panel2 },
+  rshJudge: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: C.ink2, lineHeight: 1.4 },
+  rshChoiceMain: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, border: "none", borderRadius: 10, background: "rgba(107,138,255,0.18)", color: C.accent, fontWeight: 800, fontSize: 14, padding: "11px 14px", cursor: "pointer" },
+  rshChoiceRow: { display: "flex", gap: 8 },
+  rshChoiceSub: { flex: 1, border: "none", borderRadius: 9, background: "transparent", color: C.ink3, fontWeight: 700, fontSize: 12.5, padding: "8px 6px", cursor: "pointer", border: `1px solid ${C.line}` },
+  rshSentBtn: { display: "inline-flex", alignItems: "center", gap: 6, marginLeft: 8, border: "none", borderRadius: 9, background: "rgba(81,207,102,0.16)", color: "#51CF66", fontWeight: 800, fontSize: 13.5, padding: "10px 13px", cursor: "pointer" },
   drawerReplyBar: { display: "flex", alignItems: "center", gap: 9, width: "100%", boxSizing: "border-box", margin: "2px 0 14px 0", padding: "12px 13px", border: "1px solid rgba(107,138,255,0.5)", borderRadius: 11, background: "rgba(107,138,255,0.12)", color: C.accent, fontWeight: 800, fontSize: 14, cursor: "pointer" },
   rsugBox: { display: "flex", flexDirection: "column", gap: 6, margin: "2px 0 14px 0", padding: "11px 13px", borderRadius: 11, background: "rgba(107,138,255,0.10)", border: "1px solid rgba(107,138,255,0.45)" },
   rsugHead: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.accent },
