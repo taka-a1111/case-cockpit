@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-14d"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-14e"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -2533,6 +2533,8 @@ function LogSection({ d, onChange }) {
   const [msg, setMsg] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [open, setOpen] = useState(false);        // デフォルト折りたたみ（タスク欄へのアクセスを妨げない）
+  const [expandedId, setExpandedId] = useState(null); // 本文を全文表示中のログid
   const msgs = d.msgs || [];
   const doImport = () => {
     const text = paste.trim(); if (!text || importing) return;
@@ -2568,14 +2570,19 @@ function LogSection({ d, onChange }) {
   const lastIsClient = msgs.length > 0 && msgs[msgs.length - 1].who === "client";
   return (
     <>
-      <div style={S.subtaskHead}>
+      <div style={{ ...S.subtaskHead, cursor: "pointer" }} onClick={() => setOpen((v) => !v)}>
         <MessageCircle size={19} color={C.ink3} strokeWidth={2} style={S.infoIcon} />
         <span style={S.subtaskHeadLabel}>やり取りログ</span>
-        <button style={S.logConsultBtn} onClick={consult} title="案件の文脈をコピーしてClaudeで相談">
-          <Sparkles size={13} strokeWidth={2.4} />Claudeで相談
+        <span style={S.logHeadMeta}>
+          {msgs.length > 0 ? `${msgs.length}件・${fmtLogAt(msgs[msgs.length - 1].at)}` : "未登録"}
+        </span>
+        <ChevronRight size={14} color={C.ink3} strokeWidth={2.4}
+          style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+        <button style={S.logConsultBtn} onClick={(e) => { e.stopPropagation(); consult(); }} title="案件の文脈をコピーしてClaudeで相談">
+          <Sparkles size={13} strokeWidth={2.4} />相談
         </button>
       </div>
-      <div style={S.logWrap}>
+      {open && <div style={S.logWrap}>
         {lastIsClient && weight && (
           <div style={S.logBadge}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: weight === "claude" ? C.accent : "#51CF66", flexShrink: 0 }} />
@@ -2596,7 +2603,12 @@ function LogSection({ d, onChange }) {
                 <X size={13} strokeWidth={2.2} />
               </button>
             </div>
-            <div style={S.logBody}>{m.body}</div>
+            <div
+              style={{ ...S.logBody, ...(expandedId === m.id ? {} : S.logBodyClamp), cursor: "pointer" }}
+              onClick={() => setExpandedId((v) => (v === m.id ? null : m.id))}
+              title={expandedId === m.id ? "タップで折りたたむ" : "タップで全文表示"}>
+              {m.body}
+            </div>
           </div>
         ))}
         {(() => {
@@ -2628,7 +2640,7 @@ function LogSection({ d, onChange }) {
           <button style={S.logImportBtn} onClick={doImport}>取り込む</button>
         )}
         {msg && <div style={S.logMsg}>{msg}</div>}
-      </div>
+      </div>}
     </>
   );
 }
@@ -5023,6 +5035,8 @@ const S = {
   logMsg: { fontSize: 12.5, color: C.ink3, lineHeight: 1.5 },
   logShowAll: { alignSelf: "flex-start", border: "none", background: "transparent", color: C.ink3, fontSize: 12.5, fontWeight: 700, cursor: "pointer", padding: "2px 0" },
   logBadge: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: C.ink2 },
+  logHeadMeta: { fontSize: 12, color: C.ink3, fontWeight: 600, marginLeft: 2, whiteSpace: "nowrap" },
+  logBodyClamp: { display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical", overflow: "hidden" },
   fileCheckWrap: { display: "flex", flexDirection: "column", gap: 5, padding: "9px 11px", borderRadius: 10, background: C.panel2 },
   fileCheckHead: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.ink3 },
   fileCheckDrive: { marginLeft: "auto", color: C.accent, fontSize: 12, fontWeight: 700, textDecoration: "none", flexShrink: 0 },
