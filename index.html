@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-14j"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-14k"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -350,7 +350,7 @@ function normalizeProjects(arr) {
       status: STATUS_MIGRATE[p.status] || p.status || "進行中",
       start: p.start ?? "",
       msgs: cleanMsgs(Array.isArray(p.msgs) ? p.msgs : []),
-      tsq: p.tsq ?? null, tsqSeen: p.tsqSeen ?? "",
+      tsq: p.tsq ?? null, tsqSeen: p.tsqSeen ?? "", rsug: p.rsug ?? null,
       received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
       tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "", note: t.note ?? "", repeat: t.repeat ?? null, doneAt: t.doneAt ?? (t.done ? Date.now() : null) })),
     };
@@ -724,12 +724,15 @@ export default function App() {
       const cm = [...(target.msgs || [])].reverse().find((m) => m.who === "client" && m.id);
       tsqBusy.current = true;
       try {
-        const j = await analyzeTaskFromMsg(target.company, cm.body || "");
+        const myReplies = (target.msgs || []).filter((m) => m.who === "me").map((m) => m.body);
+        const j = await analyzeIncomingMsg(target.company, cm.body || "", myReplies);
         if (editingRef2.current) return; // 解析中に編集が始まったら破棄（次回やり直し）
+        const t = j.task || {};
         const cur = projectsRef.current || [];
         persist(cur.map((p) => p.id !== target.id ? p : {
           ...p, tsqSeen: cm.id,
-          tsq: j.has && j.title ? { srcId: cm.id, title: String(j.title).slice(0, 40), note: String(j.note || ""), due: /^\d{4}-\d{2}-\d{2}$/.test(j.due || "") ? j.due : "" } : null,
+          tsq: t.has && t.title ? { srcId: cm.id, title: String(t.title).slice(0, 40), note: String(t.note || ""), due: /^\d{4}-\d{2}-\d{2}$/.test(t.due || "") ? t.due : "" } : null,
+          rsug: (j.reply && String(j.reply).trim()) ? { srcId: cm.id, text: String(j.reply).trim() } : null,
         }));
       } catch (e) {
         const msg = String((e && e.message) || e);
@@ -1827,7 +1830,8 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
             {sug && sug.mark === "ok" && <Check size={13} color="#51CF66" strokeWidth={3} style={{ flexShrink: 0 }} />}
             {sug && sug.mark === "warn" && <AlertTriangle size={13} color="#D9A23B" strokeWidth={2.6} style={{ flexShrink: 0 }} />}
             {sug && sug.mark === "unknown" && <span style={S.trustUnknown} title="ログ未登録または古いため判定できません">?</span>}
-            {p.tsq && <ListPlus size={13} color="#D9A23B" strokeWidth={2.4} style={{ flexShrink: 0 }} title="タスク候補あり（開いて確認）" />}
+            {p.tsq && <span style={S.aiPill} title="AIがタスク候補を用意しています（開いて確認）"><ListPlus size={11} strokeWidth={2.6} />タスク候補</span>}
+            {!p.tsq && p.rsug && <span style={S.aiPill} title="AIが返信案を用意しています（開いて確認）"><Reply size={11} strokeWidth={2.6} />返信案</span>}
           </span>
           {!dragActive && (st || dl) && (
             <span style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
@@ -2620,6 +2624,31 @@ function AddTaskInline({ projects, onAdd, onCancel }) {
 /* ============================================================
    詳細・編集ドロワー
    ============================================================ */
+// AI返信案の表示（コピー・閉じる）
+function RsugBox({ text, onDismiss }) {
+  const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const doCopy = async () => {
+    const ok = await copyText(text);
+    if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1600); }
+  };
+  return (
+    <div style={S.rsugBox}>
+      <div style={S.rsugHead}>
+        <Reply size={14} color={C.accent} strokeWidth={2.4} />
+        返信案（AI）
+        <button style={S.rsugCopy} onClick={doCopy}>
+          {copied ? <><Check size={13} strokeWidth={2.8} />コピーしました</> : <><Copy size={13} strokeWidth={2.2} />コピー</>}
+        </button>
+        <button style={S.rsugX} title="この返信案を消す" onClick={onDismiss}><X size={14} strokeWidth={2.2} /></button>
+      </div>
+      <div style={{ ...S.rsugText, ...(expanded ? {} : S.logBodyClamp), cursor: "pointer" }}
+        onClick={() => setExpanded((v) => !v)}
+        title={expanded ? "タップで折りたたむ" : "タップで全文表示"}>{text}</div>
+    </div>
+  );
+}
+
 // ==================== やり取りログ欄（Drawer内） ====================
 function LogSection({ d, onChange }) {
   const [paste, setPaste] = useState("");
@@ -3120,6 +3149,11 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
           {/* ===== やり取りログ ===== */}
           {!isNew && d.id !== INBOX_ID && (
             <LogSection d={d} onChange={(v) => set("msgs", v)} />
+          )}
+
+          {/* ===== AI返信案 ===== */}
+          {!isNew && d.rsug && (
+            <RsugBox text={d.rsug.text} onDismiss={() => set("rsug", null)} />
           )}
 
           {/* ===== AIタスク候補（承認制） ===== */}
@@ -4386,12 +4420,13 @@ const driveFolderLinkOf = (p) => ((p && p.links) || []).find((l) => /drive\.goog
 
 // --- ログの新着（相手の最新メッセージ）から依頼を検出しタスク候補を作る（Sonnet・承認制） ---
 // 粒度ルール：報告タイミングが同じものは1件にまとめ、内訳は詳細(note)へ。1メッセージから原則1件。
-async function analyzeTaskFromMsg(companyName, body) {
-  const sys = 'あなたはフリーランスの案件管理アシスタントです。クライアントからのメッセージを読み、受託者が対応すべき「依頼・宿題」があるか判定し、JSONだけを出力します。説明やコードブロック記法は付けないこと。\n{"has":true|false,"title":"タスク名（25字以内。報告タイミングが同じ複数の指示は1件にまとめた名前にする）","note":"内訳の箇条書き（各行を・で始め改行区切り。内訳が1つだけ・不要なら空文字）","due":"YYYY-MM-DD（メッセージに期限・締切が明記されている場合のみ。無ければ空文字）"}\n判定基準：修正依頼・作成依頼・提出依頼・確認作業の依頼はhas:true。挨拶・お礼・進捗確認・支払い連絡・雑談・受託者側の発言のみはhas:false。今日は' + dStr(0) + '。';
-  const out = await callClaude({ system: sys, user: `案件「${companyName || ""}」のクライアントからのメッセージ:\n${body.slice(0, 4000)}`, maxTokens: 500 });
+async function analyzeIncomingMsg(companyName, body, myRecentReplies) {
+  const sys = 'あなたはフリーランス（高崎・屋号インフォサクセス）の案件管理アシスタントです。クライアントからのメッセージを読み、(1)対応すべき依頼のタスク化 (2)返信文の下書き を作り、JSONだけを出力します。説明やコードブロック記法は付けないこと。\n{"task":{"has":true|false,"title":"タスク名（25字以内。報告タイミングが同じ複数の指示は1件にまとめた名前にする）","note":"内訳の箇条書き（各行を・で始め改行区切り。内訳が1つだけ・不要なら空文字）","due":"YYYY-MM-DD（期限・締切が明記されている場合のみ。無ければ空文字）"},"reply":"返信文の下書き。返信が不要な内容（自動通知・事務連絡のみ等）なら空文字"}\nタスク判定基準：修正依頼・作成依頼・提出依頼・確認作業の依頼はhas:true。挨拶・お礼・進捗確認・支払い連絡・雑談のみはhas:false。\n返信の規則：与えられた過去の返信例と同じ文体・トーン・改行リズムを厳密に守る（「お世話になっております。」で始め「引き続きよろしくお願いいたします。」等で締める）。依頼への承諾・要点の復唱を簡潔に。金額・条件など判断が必要な点は断定せず「確認のうえ改めてご連絡いたします」とする。事実の捏造禁止。今日は' + dStr(0) + '。';
+  const examples = (myRecentReplies || []).slice(-2).map((s) => s.slice(0, 600)).join("\n----\n");
+  const out = await callClaude({ system: sys, user: `案件「${companyName || ""}」\n\n【過去の自分の返信例（文体見本）】\n${examples || "（例なし。丁寧なビジネス文体で）"}\n\n【クライアントからの新着メッセージ】\n${body.slice(0, 4000)}`, maxTokens: 900 });
   const clean = out.replace(/```json|```/g, "").trim();
   const j = JSON.parse(clean);
-  if (!j || typeof j.has !== "boolean") throw new Error("bad json");
+  if (!j || !j.task || typeof j.task.has !== "boolean") throw new Error("bad json");
   return j;
 }
 
@@ -5239,6 +5274,12 @@ const S = {
   tsqBtns: { display: "flex", alignItems: "center", gap: 8, marginTop: 2 },
   tsqAdd: { border: "none", borderRadius: 9, background: "rgba(217,162,59,0.18)", color: "#D9A23B", fontWeight: 800, fontSize: 13, padding: "7px 13px", cursor: "pointer" },
   tsqIgnore: { border: "none", background: "transparent", color: C.ink3, fontWeight: 700, fontSize: 13, padding: "7px 9px", cursor: "pointer" },
+  aiPill: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: "#D9A23B", background: "rgba(217,162,59,0.14)", borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap" },
+  rsugBox: { display: "flex", flexDirection: "column", gap: 6, margin: "2px 0 14px 31px", padding: "10px 12px", borderRadius: 10, background: "rgba(107,138,255,0.08)" },
+  rsugHead: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.accent },
+  rsugCopy: { marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, border: "none", borderRadius: 8, background: "rgba(107,138,255,0.16)", color: C.accent, fontWeight: 800, fontSize: 12.5, padding: "6px 11px", cursor: "pointer", flexShrink: 0 },
+  rsugX: { border: "none", background: "transparent", color: C.ink3, cursor: "pointer", padding: 3, display: "inline-flex", flexShrink: 0 },
+  rsugText: { fontSize: 14, color: C.ink2, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.6 },
   plEmpty: { color: C.ink3, fontSize: 14, textAlign: "center", padding: "40px 0" },
   doneSection: { marginTop: 16 },
   doneGrid: { display: "flex", flexDirection: "column", gap: 8, marginTop: 4 },
