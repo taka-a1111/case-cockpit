@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-14b"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-14d"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -320,13 +320,30 @@ function laneFromDue(due) {
   if (n !== null && n <= 0) return "today";
   return "later";
 }
+// 保存済みやり取りログの掃除：CWのサムネイル行(Loading_40x40)を除去し、
+// 同時刻・同発言者で本文が同一/包含関係の重複を1件に統合（長い方を残す）
+function cleanMsgs(msgs) {
+  const cleaned = msgs.map((m) => ({
+    ...m,
+    body: (m.body || "").split("\n").filter((l) => !/^Loading_\d+x\d+$/.test(l.trim())).join("\n").trim(),
+  })).filter((m) => m.body);
+  const out = [];
+  const nrm = (s) => (s || "").replace(/\s+/g, " ").trim();
+  for (const m of cleaned) {
+    const nb = nrm(m.body);
+    const i = out.findIndex((x) => x.at === m.at && x.who === m.who && (() => { const xb = nrm(x.body); return xb === nb || xb.startsWith(nb) || nb.startsWith(xb); })());
+    if (i >= 0) { if (nb.length > nrm(out[i].body).length) out[i] = { ...out[i], body: m.body }; continue; }
+    out.push(m);
+  }
+  return out;
+}
 function normalizeProjects(arr) {
   let list = arr.map((p) => {
     const base = {
       ...p,
       status: STATUS_MIGRATE[p.status] || p.status || "進行中",
       start: p.start ?? "",
-      msgs: Array.isArray(p.msgs) ? p.msgs : [],
+      msgs: cleanMsgs(Array.isArray(p.msgs) ? p.msgs : []),
       received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
       tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "", note: t.note ?? "", repeat: t.repeat ?? null, doneAt: t.doneAt ?? (t.done ? Date.now() : null) })),
     };
@@ -2582,6 +2599,29 @@ function LogSection({ d, onChange }) {
             <div style={S.logBody}>{m.body}</div>
           </div>
         ))}
+        {(() => {
+          const files = extractFileMentions(msgs);
+          if (!files.length) return null;
+          const dl = driveFolderLinkOf(d);
+          return (
+            <div style={S.fileCheckWrap}>
+              <div style={S.fileCheckHead}>
+                <FileText size={13} strokeWidth={2.2} />
+                <span>ログに出てきたファイル（Driveへの保存を確認）</span>
+                {dl && (
+                  <a href={dl.url} target="_blank" rel="noopener noreferrer" style={S.fileCheckDrive}>フォルダを開く</a>
+                )}
+              </div>
+              {files.map((f, i) => (
+                <div key={i} style={S.fileCheckRow}>
+                  <span style={S.fileCheckName}>{f.name}</span>
+                  <span style={S.fileCheckMeta}>{fmtLogAt(f.at)}{f.who === "client" ? "・相手から" : f.who === "me" ? "・自分から" : ""}</span>
+                </div>
+              ))}
+              {!dl && <div style={S.fileCheckHint}>リンク欄にDriveの案件フォルダを登録すると、ここから開けます</div>}
+            </div>
+          );
+        })()}
         <textarea style={S.logPaste} value={paste} placeholder="メッセージ画面を全選択コピーして貼り付け（CW／ランサーズ／Chatwork対応。重複は自動で除外）"
           onChange={(e) => setPaste(e.target.value)} />
         {paste.trim() && (
@@ -3941,18 +3981,23 @@ function parseCWLog(text, clientHint) {
   if (!client) client = clientHint || "";
   const noise = /^(問題報告|スター付きメッセージ一覧|メッセージを探す|違反報告をする|テンプレートを作成|新着メッセージの通知設定をする|ここにメッセージ|選択されていません|送信)$/;
   const mkAt = (m) => `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")} ${String(m[4]).padStart(2, "0")}:${m[5]}`;
+  // ヘッダからクライアント名が取れない場合の推定用：同じ行が2回以上出現する短い行は「名前行」とみなす
+  const lineCount = {};
+  for (const l of lines) { if (l && l.length <= 25) lineCount[l] = (lineCount[l] || 0) + 1; }
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     const dm = lines[i].match(dateRe);
     if (!dm) continue;
     const prev = lines[i - 1] || "";
-    const nameOnly = ME_NAMES.includes(prev) || (client && prev === client);
+    const looksName = prev && prev.length <= 25 && !/[。、．，！？!?…]/.test(prev) && (lineCount[prev] || 0) >= 2 && !isMeName(prev) && (!client || !prev.startsWith(client));
+    const nameOnly = ME_NAMES.includes(prev) || (client && prev === client) || looksName;
     if (nameOnly) {
       // 展開形式：名前行→日付行→本文（次ブロックまで）
       const body = [];
       for (let j = i + 1; j < lines.length; j++) {
         const l = lines[j];
         if (!l) { if (body.length) body.push(""); continue; }
+        if (/^Loading_\d+x\d+$/.test(l)) continue; // CWの添付サムネイル読み込みプレースホルダ
         if (noise.test(l) || dateRe.test(l)) break;
         if (dateRe.test(lines[j + 1] || "") && (isMeName(l) || (client && l.startsWith(client)))) break;
         body.push(l);
@@ -4062,12 +4107,18 @@ function mergeLogEntries(existing, incoming, src) {
       if (mb === nb) return true;
       if (m.partial && nb.startsWith(mb.slice(0, Math.max(10, mb.length)))) return true;
       if (inc.partial && mb.startsWith(nb.slice(0, Math.max(10, nb.length)))) return true;
+      // 同時刻・同発言者で本文が包含関係（CWは添付付きメッセージを二重描画するため）
+      if (m.at && inc.at && m.at === inc.at && m.who === inc.who && mb && nb && (mb.startsWith(nb) || nb.startsWith(mb))) return true;
       return false;
     });
     if (dup >= 0) {
+      const exb = normBody(list[dup].body);
       if (list[dup].partial && !inc.partial) {
         list[dup] = { ...list[dup], body: inc.body, partial: false, who: inc.who || list[dup].who, name: inc.name || list[dup].name, at: inc.at || list[dup].at };
         upgraded++;
+      } else if (!inc.partial && nb.length > exb.length) {
+        // 包含関係の重複は長い方（情報が多い方）の本文を採用
+        list[dup] = { ...list[dup], body: inc.body };
       }
       continue;
     }
@@ -4133,6 +4184,23 @@ function buildClaudeContext(p) {
 }
 
 const claudeProjectLinkOf = (p) => ((p && p.links) || []).find((l) => /claude\.ai\/project\//.test(l.url || ""));
+
+// --- ログからファイル名の言及を抽出（保存漏れチェック用・照合なし版） ---
+const FILE_EXT_RE = /[\w\-（）()\[\]々ぁ-んァ-ヶ一-龠ー]+\.(?:jpe?g|png|gif|webp|svg|pdf|xlsx?|docx?|pptx?|zip|rar|html?|css|js|csv|tsv|txt|md|mp4|mov|mp3|wav|ai|psd|fig)\b/gi;
+function extractFileMentions(msgs) {
+  const seen = new Map(); // name(lower) -> {name, at, who}
+  for (const m of msgs || []) {
+    if (!m.body) continue;
+    const noUrl = m.body.replace(/https?:\/\/[^\s　]+/g, " "); // URL内のファイル名は除外
+    const hits = noUrl.match(FILE_EXT_RE) || [];
+    for (const h of hits) {
+      const k = h.toLowerCase();
+      if (!seen.has(k)) seen.set(k, { name: h, at: m.at || "", who: m.who || "" });
+    }
+  }
+  return [...seen.values()].sort((a, b) => ((a.at || "9999") < (b.at || "9999") ? -1 : 1));
+}
+const driveFolderLinkOf = (p) => ((p && p.links) || []).find((l) => /drive\.google\.com/.test(l.url || ""));
 
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch {}
@@ -4955,6 +5023,13 @@ const S = {
   logMsg: { fontSize: 12.5, color: C.ink3, lineHeight: 1.5 },
   logShowAll: { alignSelf: "flex-start", border: "none", background: "transparent", color: C.ink3, fontSize: 12.5, fontWeight: 700, cursor: "pointer", padding: "2px 0" },
   logBadge: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: C.ink2 },
+  fileCheckWrap: { display: "flex", flexDirection: "column", gap: 5, padding: "9px 11px", borderRadius: 10, background: C.panel2 },
+  fileCheckHead: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.ink3 },
+  fileCheckDrive: { marginLeft: "auto", color: C.accent, fontSize: 12, fontWeight: 700, textDecoration: "none", flexShrink: 0 },
+  fileCheckRow: { display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 },
+  fileCheckName: { fontSize: 13.5, fontWeight: 700, color: C.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  fileCheckMeta: { fontSize: 11.5, color: C.ink3, flexShrink: 0 },
+  fileCheckHint: { fontSize: 11.5, color: C.ink3 },
   // ステータス確信度・提案バー
   trustUnknown: { flexShrink: 0, width: 15, height: 15, borderRadius: "50%", background: C.panel2, color: C.ink3, fontSize: 10.5, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1 },
   suggestBar: { display: "flex", alignItems: "center", gap: 7, marginTop: 9, padding: "7px 9px", borderRadius: 9, background: "rgba(217,162,59,0.10)" },
