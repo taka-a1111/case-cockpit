@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-14y"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-15a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -337,7 +337,12 @@ function cleanMsgs(msgs) {
   const nrm = (s) => (s || "").replace(/\s+/g, " ").trim();
   for (const m of cleaned) {
     const nb = nrm(m.body);
-    const i = out.findIndex((x) => x.at === m.at && x.who === m.who && (() => { const xb = nrm(x.body); return xb === nb || xb.startsWith(nb) || nb.startsWith(xb); })());
+    const i = out.findIndex((x) => x.at === m.at && x.who === m.who && (() => {
+      const xb = nrm(x.body);
+      if (xb === nb) return true;
+      const minLen = Math.min(xb.length, nb.length);
+      return minLen >= 20 && (xb.startsWith(nb) || nb.startsWith(xb)); // 短文の誤統合を防止
+    })());
     if (i >= 0) { if (nb.length > nrm(out[i].body).length) out[i] = { ...out[i], body: m.body }; continue; }
     out.push(m);
   }
@@ -720,9 +725,9 @@ export default function App() {
       if (tsqBusy.current || tsqDead.current || editingRef2.current) return;
       const ps = projectsRef.current || [];
       const target = ps.find((p) => {
-        if (p.id === INBOX_ID || p.status === "完了" || p.tsq) return false;
+        if (p.id === INBOX_ID || p.status === "完了") return false;
         const cm = [...(p.msgs || [])].reverse().find((m) => m.who === "client" && m.id);
-        return cm && cm.id !== (p.tsqSeen || "");
+        return cm && cm.id !== (p.tsqSeen || ""); // 未処理候補があっても新着が来たら再解析して上書き
       });
       if (!target) return;
       const cm = [...(target.msgs || [])].reverse().find((m) => m.who === "client" && m.id);
@@ -2909,7 +2914,10 @@ function LogSection({ d, onChange }) {
       onChange(list);
       setPaste("");
       const parts = [];
-      if (added) parts.push(`${added}件を追加しました`);
+      if (added) {
+        const latest = list.length ? list[list.length - 1] : null;
+        parts.push(`${added}件を追加しました${latest && latest.at ? `（最新 ${fmtLogAt(latest.at)}）` : ""}`);
+      }
       if (upgraded) parts.push(`${upgraded}件を全文に更新`);
       if (!added && !upgraded) parts.push("新しいメッセージはありませんでした（すべて登録済み）");
       if (entries.some((e) => e.partial)) parts.push("※「…」で省略された本文があります。折りたたみを開いてコピーすると全文が入ります");
@@ -4576,13 +4584,14 @@ function mergeLogEntries(existing, incoming, src) {
       const mb = normBody(m.body);
       // 「送信済みにする」で手動記録した自分の発言は、後からChatwork等で取れた実メッセージと本文一致で統合
       if (m.src === "sent" && m.who === inc.who && mb === nb) return true;
+      const strictAt = !!(m.at && inc.at && m.at === inc.at); // 両方に日時があり一致
       const sameAt = m.at && inc.at ? m.at === inc.at : true;
-      if (!sameAt) return false;
-      if (mb === nb) return true;
+      if (sameAt && mb === nb) return true;
+      // あいまい照合（省略コピー・二重描画の統合）は同一時刻が確定した場合のみ（誤爆防止）
+      if (!strictAt) return false;
       if (m.partial && nb.startsWith(mb.slice(0, Math.max(10, mb.length)))) return true;
       if (inc.partial && mb.startsWith(nb.slice(0, Math.max(10, nb.length)))) return true;
-      // 同時刻・同発言者で本文が包含関係（CWは添付付きメッセージを二重描画するため）
-      if (m.at && inc.at && m.at === inc.at && m.who === inc.who && mb && nb && (mb.startsWith(nb) || nb.startsWith(mb))) return true;
+      if (m.who === inc.who && mb && nb && (mb.startsWith(nb) || nb.startsWith(mb))) return true;
       return false;
     });
     if (dup >= 0) {
