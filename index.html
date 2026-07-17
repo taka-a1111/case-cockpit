@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-15b"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-17a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -1476,6 +1476,7 @@ export default function App() {
 function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, onReorderTask, onMoveTask, sortMode, setSortMode, onSetStatus, onOpenReply, onClearRsug }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
+  const [openWarns, setOpenWarns] = useState(true); // ステータス見直し集約バーの開閉
 
   const [dragId, setDragId] = useState(null);
   const [dragTaskId, setDragTaskId] = useState(null);
@@ -1587,6 +1588,8 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
   // ステータス順を最優先：進行中→相手待ち→支払い待ち（各グループ内は上のソート順を維持）
   const statusRank = (p) => (p.status === "相手待ち" ? 1 : p.status === "支払い待ち" ? 2 : 0);
   cardList = [...cardList].sort((a, b) => statusRank(a) - statusRank(b));
+  // ステータス見直し：メッセージログと現在のステータスが食い違う案件を集約
+  const statusWarns = cardList.map((p) => ({ p, sug: statusSuggestion(p) })).filter((x) => x.sug && x.sug.mark === "warn" && x.sug.suggest);
 
   const minDue = (p) => { const a = dueDaysList(p); return a.length ? Math.min(...a) : Infinity; };
   const lists = {
@@ -1631,6 +1634,33 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
           );
         })}
       </div>
+      )}
+
+      {statusWarns.length > 0 && (
+        <div style={{ ...S.replyPanel, borderColor: "#D9A23B", marginBottom: 12 }}>
+          <div style={{ ...S.replyPanelHead, cursor: "pointer", paddingBottom: openWarns ? 8 : 0, marginBottom: 0, borderBottom: openWarns ? `1px solid ${C.line}` : "none" }}
+            onClick={() => setOpenWarns((v) => !v)}>
+            <AlertTriangle size={14} color="#D9A23B" strokeWidth={2.4} style={{ flexShrink: 0 }} />
+            <span style={S.replyPanelTitle}>ステータス見直し</span>
+            <span style={S.replyPanelNum}>{statusWarns.length}件</span>
+            <span style={{ marginLeft: 6, color: "#D9A23B", fontWeight: 800, fontSize: 12 }}>{openWarns ? "▲" : "▼"}</span>
+          </div>
+          {openWarns && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+              {statusWarns.map(({ p, sug }) => (
+                <div key={p.id} style={S.replyItem}>
+                  <button style={S.replyItemMain} onClick={() => onOpen(p)}>
+                    <span style={S.replyItemCol}>
+                      <span style={S.replyItemName}>{p.company}</span>
+                      <span style={{ ...S.replyItemSub, whiteSpace: "normal", color: "#D9A23B" }}>{sug.reason} →「{sug.suggest}」では？</span>
+                    </span>
+                  </button>
+                  <button style={S.suggestBtn} onClick={() => onSetStatus && onSetStatus(p.id, sug.suggest)}>{sug.suggest}にする</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {openCard && (
@@ -4690,7 +4720,7 @@ function statusSuggestion(p) {
   if (!msgs.length) return { mark: "unknown" };
   const last = msgs[msgs.length - 1];
   const days = Math.round((TODAY.getTime() - new Date(last.at.slice(0, 10) + "T00:00:00").getTime()) / 86400000);
-  if (!isFinite(days) || days > 14) return { mark: "unknown" };
+  if (!isFinite(days) || days > 30) return { mark: "unknown" };
   if (last.who === "client") {
     if (p.status === "相手待ち") return { mark: "warn", suggest: "進行中", reason: "メッセージあり" };
     if (p.status === "支払い待ち" && !/(支払|入金|振込|検収)/.test(last.body)) return { mark: "warn", suggest: "進行中", reason: "メッセージあり" };
