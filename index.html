@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-17c"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-17d"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -355,7 +355,7 @@ function normalizeProjects(arr) {
       status: STATUS_MIGRATE[p.status] || p.status || "進行中",
       start: p.start ?? "",
       msgs: cleanMsgs(Array.isArray(p.msgs) ? p.msgs : []),
-      tsq: p.tsq ?? null, tsqSeen: p.tsqSeen ?? "", rsug: p.rsug ?? null, rneed: p.rneed ?? null,
+      tsq: p.tsq ?? null, tsqSeen: p.tsqSeen ?? "", rsug: p.rsug ?? null, rneed: p.rneed ?? null, statusAt: p.statusAt ?? null,
       received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
       tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "", note: t.note ?? "", repeat: t.repeat ?? null, doneAt: t.doneAt ?? (t.done ? Date.now() : null) })),
     };
@@ -1228,7 +1228,7 @@ export default function App() {
   const toggleProjectDone = (pid) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, status: p.status === "完了" ? "進行中" : "完了" }));
   const setProjectStatus = (pid, status) =>
-    persist(projects.map((p) => p.id !== pid ? p : { ...p, status }));
+    persist(projects.map((p) => p.id !== pid ? p : { ...p, status, statusAt: new Date().toISOString() }));
   // ① 案件一覧のリンク並び替え（project.linksを共有しているので詳細ドロワーも同順になる）
   const reorderLinks = (pid, links) =>
     persist(projects.map((p) => p.id !== pid ? p : { ...p, links }));
@@ -4718,6 +4718,10 @@ function statusSuggestion(p) {
   if (!isFinite(days) || days > 30) return { mark: "unknown" };
   const dw = days <= 0 ? "今日" : days === 1 ? "昨日" : `${days}日前に`;
   if (last.who === "client") {
+    // 相手待ち/支払い待ちに切り替えた時刻が相手の最新メッセージ以降なら「対応済み」とみなし提案しない
+    // （例：PRIZMA等、ステータス変更で自動返信が飛び、自分の送信ログがHelmに残らない運用）
+    const settledAfterMsg = p.statusAt && new Date(p.statusAt).getTime() >= new Date(last.at).getTime();
+    if (settledAfterMsg && (p.status === "相手待ち" || p.status === "支払い待ち")) return { mark: "ok" };
     if (p.status === "相手待ち") return { mark: "warn", suggest: "進行中", reason: `相手から${dw}メッセージ、まだ未返信` };
     if (p.status === "支払い待ち" && !/(支払|入金|振込|検収)/.test(last.body)) return { mark: "warn", suggest: "進行中", reason: `相手から${dw}メッセージ、まだ未返信` };
     return { mark: "ok" };
