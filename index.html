@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23ai"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23aj"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -822,10 +822,7 @@ export default function App() {
         const openTitles = (target.tasks || []).filter((t) => !t.done).map((t) => t.title).filter(Boolean);
         const j = await analyzeIncomingMsg(target.company, recentLog, openTitles);
         if (editingRef2.current) return; // 解析中に編集が始まったら破棄（次回やり直し）
-        const norm = (s) => String(s || "").toLowerCase().replace(/[\s　、。・…「」（）()【】\-—:：の]/g, "");
-        const openNorms = (target.tasks || []).filter((t) => !t.done).map((t) => norm(t.title)).filter((s) => s.length >= 3);
-        const dupOf = (title) => { const n = norm(title); if (n.length < 3) return false; return openNorms.some((o) => o === n || (n.length >= 5 && (o.includes(n) || n.includes(o)))); };
-        const items = (j.tasks || []).filter((t) => t && t.title && !dupOf(t.title)).slice(0, 4)
+        const items = (j.tasks || []).filter((t) => t && t.title && !isDupTaskTitle(t.title, target.tasks)).slice(0, 4)
           .map((t) => ({ title: String(t.title).slice(0, 40), note: String(t.note || ""), due: /^\d{4}-\d{2}-\d{2}$/.test(t.due || "") ? t.due : "", urgent: !!t.urgent }));
         const cur = projectsRef.current || [];
         persist(cur.map((p) => p.id !== target.id ? p : {
@@ -2155,7 +2152,7 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
             {sug && sug.mark === "ok" && <Check size={13} color="#51CF66" strokeWidth={3} style={{ flexShrink: 0 }} />}
             {sug && sug.mark === "warn" && <AlertTriangle size={13} color="#D9A23B" strokeWidth={2.6} style={{ flexShrink: 0 }} />}
             {sug && sug.mark === "unknown" && <span style={S.trustUnknown} title="ログ未登録または古いため判定できません">?</span>}
-            {p.tsq && <ListPlus size={14} color="#D9A23B" strokeWidth={2.6} style={{ flexShrink: 0 }} title="タスク候補あり（開いて確認）" />}
+            {liveTsqItems(p).length > 0 && <ListPlus size={14} color="#D9A23B" strokeWidth={2.6} style={{ flexShrink: 0 }} title="タスク候補あり（開いて確認）" />}
           </span>
           {!dragActive && (st || dl) && (
             <span style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
@@ -3776,7 +3773,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
           </div>
 
           {/* ===== AIタスク候補（承認制） ===== */}
-          {!isNew && d.tsq && (d.tsq.items || []).length > 0 && (() => {
+          {!isNew && d.tsq && liveTsqItems(d).length > 0 && (() => {
             const mkTask = (it) => {
               const t = task(it.title, null);
               t.note = it.note || "";
@@ -3784,12 +3781,12 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
               t.start = (it.urgent || new Date().getHours() < 17) ? dStr(0) : dStr(1); // 急ぎ or 17時前=今日／17時以降=明日
               return t;
             };
-            const nrm = (s) => String(s || "").toLowerCase().replace(/[\s　、。・…「」（）()【】\-—:：の]/g, "");
-            const isDup = (it) => { const n = nrm(it.title); const exist = d.tasks.filter((x) => !x.done).map((x) => nrm(x.title)); return n.length >= 3 && exist.some((o) => o === n || (n.length >= 5 && (o.includes(n) || n.includes(o)))); };
-            const dropItem = (p, idx) => { const items = (p.tsq.items || []).filter((_, j) => j !== idx); return items.length ? { ...p.tsq, items } : null; };
-            const addOne = (idx) => setD((p) => { const it = (p.tsq.items || [])[idx]; if (!it) return p; return { ...p, tasks: isDup(it) ? p.tasks : [...p.tasks, mkTask(it)], tsq: dropItem(p, idx) }; });
-            const ignoreOne = (idx) => setD((p) => ({ ...p, tsq: dropItem(p, idx) }));
-            const items = d.tsq.items || [];
+            const isDup = (it) => isDupTaskTitle(it.title, d.tasks);
+            const items = liveTsqItems(d); // 既存タスクと重複する候補は表示しない
+            const idxOf = (it) => (d.tsq.items || []).indexOf(it);
+            const dropItem = (p, idx) => { const its = (p.tsq.items || []).filter((_, j) => j !== idx); return its.length ? { ...p.tsq, items: its } : null; };
+            const addOne = (i) => { const it = items[i]; const idx = idxOf(it); setD((p) => { if (idx < 0) return p; return { ...p, tasks: isDup(it) ? p.tasks : [...p.tasks, mkTask(it)], tsq: dropItem(p, idx) }; }); };
+            const ignoreOne = (i) => { const it = items[i]; const idx = idxOf(it); setD((p) => (idx < 0 ? p : { ...p, tsq: dropItem(p, idx) })); };
             return (
             <div style={S.tsqBox}>
               <div style={S.tsqHead}>
@@ -5174,6 +5171,23 @@ function extractCwMail(raw) {
     return { body: mid, url };
   } catch { return { body: "", url: "" }; }
 }
+
+// タスク名の重複判定（言い換え対応）：正規化＋含有＋文字2グラム類似
+const tsqNorm = (s) => String(s || "").toLowerCase().replace(/[\s　、。・…「」（）()【】\-—:：の]/g, "");
+function titleSim(a, b) {
+  a = tsqNorm(a); b = tsqNorm(b);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if ((a.length >= 5 || b.length >= 5) && (a.includes(b) || b.includes(a))) return 1;
+  if (a.length < 4 || b.length < 4) return 0;
+  const big = (s) => { const set = new Set(); for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2)); return set; };
+  const A = big(a), B = big(b);
+  let inter = 0; A.forEach((x) => { if (B.has(x)) inter++; });
+  return inter / Math.min(A.size, B.size);
+}
+const isDupTaskTitle = (title, tasks) => (tasks || []).some((t) => !t.done && titleSim(title, t.title) >= 0.66);
+// 表示用：既存タスクと重複する候補を除いた残り（保存後に手動追加されたケースも表示段階で吸収）
+const liveTsqItems = (p) => (p && p.tsq && p.tsq.items ? p.tsq.items.filter((it) => !isDupTaskTitle(it.title, p.tasks)) : []);
 
 // メールを案件に照合：クライアント名・差出人・件名を、案件名とログの登場人物に突き合わせる
 function matchMailToProject(mail, projects) {
