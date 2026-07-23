@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23x"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23y"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -5199,10 +5199,18 @@ const replyLinkOf = (p) => {
   // クラウドワークス：通知メール由来の最新メッセージにスレッドURLがあれば該当スレッドへ直行
   const lastCwMail = [...((p && p.msgs) || [])].reverse().find((m) => m.who === "client" && m.curl);
   if (lastCwMail) return { id: "__cwmsg__", label: lastCwMail.curl.includes("lancers.jp") ? "ランサーズ" : "クラウドワークス", url: lastCwMail.curl };
+  // メール由来の案件：最新メッセージがGmail取り込みなら、リンク欄のGmailリンクを返信先にする
+  const lastGm = [...((p && p.msgs) || [])].reverse().find((m) => m.who === "client" && m.src === "gmail");
+  if (lastGm) {
+    const gm = ls.find((l) => /mail\.google\.com/.test(l.url));
+    if (gm) return { ...gm, label: gm.label || "Gmail" };
+  }
   return ls.find((l) => l.kind === "reply")
     || ls.find((l) => /chatwork\.com/.test(l.url))
     || ls.find((l) => /crowdworks\.jp|lancers\.jp/.test(l.url))
-    || ls[0] || null;
+    || ls.find((l) => /mail\.google\.com/.test(l.url))
+    || ls.find((l) => !/claude\.ai/.test(l.url))  // Claudeリンクは返信先にしない
+    || null;
 };
 
 // 返信シート用：必ず返信文を生成する（「不要」判定はしない）
