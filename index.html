@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23o"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23p"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -3726,13 +3726,27 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
           </div>
 
           {/* ===== AIタスク候補（承認制） ===== */}
-          {!isNew && d.tsq && (d.tsq.items || []).length > 0 && (
+          {!isNew && d.tsq && (d.tsq.items || []).length > 0 && (() => {
+            const mkTask = (it) => {
+              const t = task(it.title, null);
+              t.note = it.note || "";
+              t.due = it.due || "";                        // 期限：メッセージに明記があった場合のみ
+              t.start = (it.urgent || new Date().getHours() < 17) ? dStr(0) : dStr(1); // 急ぎ or 17時前=今日／17時以降=明日
+              return t;
+            };
+            const nrm = (s) => String(s || "").toLowerCase().replace(/[\s　、。・…「」（）()【】\-—:：の]/g, "");
+            const isDup = (it) => { const n = nrm(it.title); const exist = d.tasks.filter((x) => !x.done).map((x) => nrm(x.title)); return n.length >= 3 && exist.some((o) => o === n || (n.length >= 5 && (o.includes(n) || n.includes(o)))); };
+            const dropItem = (p, idx) => { const items = (p.tsq.items || []).filter((_, j) => j !== idx); return items.length ? { ...p.tsq, items } : null; };
+            const addOne = (idx) => setD((p) => { const it = (p.tsq.items || [])[idx]; if (!it) return p; return { ...p, tasks: isDup(it) ? p.tasks : [...p.tasks, mkTask(it)], tsq: dropItem(p, idx) }; });
+            const ignoreOne = (idx) => setD((p) => ({ ...p, tsq: dropItem(p, idx) }));
+            const items = d.tsq.items || [];
+            return (
             <div style={S.tsqBox}>
               <div style={S.tsqHead}>
                 <ListPlus size={14} color="#D9A23B" strokeWidth={2.4} />
-                依頼らしき内容を検出しました{(d.tsq.items || []).length > 1 ? `（${d.tsq.items.length}件・別々のタスクとして追加されます）` : ""}
+                依頼らしき内容を検出しました{items.length > 1 ? `（${items.length}件）` : ""}
               </div>
-              {(d.tsq.items || []).map((it, i) => (
+              {items.map((it, i) => (
                 <div key={i} style={i > 0 ? { borderTop: `1px solid ${C.line}`, marginTop: 8, paddingTop: 8 } : {}}>
                   <div style={S.tsqTitle}>{it.title}</div>
                   {it.note && <div style={S.tsqNote}>{it.note}</div>}
@@ -3740,25 +3754,23 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                     いつやる：{it.urgent ? "今日（緊急）" : (new Date().getHours() < 17 ? "今日" : "明日")}
                     {it.due ? `／期限：${it.due.slice(5).replace("-", "/")}` : ""}
                   </div>
+                  <div style={{ ...S.tsqBtns, marginTop: 7 }}>
+                    <button style={S.tsqAdd} onClick={() => addOne(i)}>このタスクを追加</button>
+                    <button style={S.tsqIgnore} onClick={() => ignoreOne(i)}>無視</button>
+                  </div>
                 </div>
               ))}
-              <div style={S.tsqBtns}>
-                <button style={S.tsqAdd} onClick={() => {
-                  const nrm = (s) => String(s || "").toLowerCase().replace(/[\s　、。・…「」（）()【】\-—:：の]/g, "");
-                  const exist = d.tasks.filter((x) => !x.done).map((x) => nrm(x.title));
-                  const adds = (d.tsq.items || []).filter((it) => { const n = nrm(it.title); return !(n.length >= 3 && exist.some((o) => o === n || (n.length >= 5 && (o.includes(n) || n.includes(o))))); }).map((it) => {
-                    const t = task(it.title, null);
-                    t.note = it.note || "";
-                    t.due = it.due || "";                        // 期限：メッセージに明記があった場合のみ
-                    t.start = (it.urgent || new Date().getHours() < 17) ? dStr(0) : dStr(1); // 急ぎ or 17時前=今日／17時以降=明日
-                    return t;
-                  });
-                  setD((p) => ({ ...p, tasks: [...p.tasks, ...adds], tsq: null }));
-                }}>タスクに追加{(d.tsq.items || []).length > 1 ? `（${d.tsq.items.length}件）` : ""}</button>
-                <button style={S.tsqIgnore} onClick={() => set("tsq", null)}>無視</button>
-              </div>
+              {items.length > 1 && (
+                <div style={{ ...S.tsqBtns, borderTop: `1px solid ${C.line}`, marginTop: 10, paddingTop: 10 }}>
+                  <button style={S.tsqAdd} onClick={() => {
+                    setD((p) => ({ ...p, tasks: [...p.tasks, ...(p.tsq.items || []).filter((it) => !isDup(it)).map(mkTask)], tsq: null }));
+                  }}>すべて追加（{items.length}件）</button>
+                  <button style={S.tsqIgnore} onClick={() => set("tsq", null)}>すべて無視</button>
+                </div>
+              )}
             </div>
-          )}
+            );
+          })()}
 
           {/* ===== リンク（Claude / GitHub / 公開URL など） ===== */}
           <div style={S.linkSectionRow}>
