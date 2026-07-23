@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23n"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23o"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -885,6 +885,28 @@ export default function App() {
 
   const lastPushedJsonRef = useRef(""); // 直近pushしたJSONの完全一致比較用（無駄通信の抑止）
   // Supabase保存。楽観ロック（rev）で他端末との整合性を担保。
+  // 保存競合時のマージ：ローカルの並びと編集を保ちつつ、サーバ側にしか無い案件・メッセージ・タスク・リンクを取り込む
+  const mergeStates = (local, server) => {
+    const byId = (arr) => { const m = new Map(); (arr || []).forEach((x) => x && x.id && m.set(x.id, x)); return m; };
+    const smap = byId(server);
+    const out = []; const seen = new Set();
+    (local || []).forEach((lp) => {
+      seen.add(lp.id);
+      const sp = smap.get(lp.id);
+      if (!sp) { out.push(lp); return; }
+      const lm = byId(lp.msgs), sm = byId(sp.msgs);
+      sm.forEach((v, k) => { if (!lm.has(k)) lm.set(k, v); });
+      const msgs = [...lm.values()].sort((a, b) => ((a.at || "9999") < (b.at || "9999") ? -1 : 1));
+      const lt = byId(lp.tasks), st = byId(sp.tasks);
+      st.forEach((v, k) => { if (!lt.has(k)) lt.set(k, v); });
+      const ll = byId(lp.links), sl = byId(sp.links);
+      sl.forEach((v, k) => { if (!ll.has(k)) ll.set(k, v); });
+      out.push({ ...sp, ...lp, msgs, tasks: [...lt.values()], links: [...ll.values()] });
+    });
+    (server || []).forEach((sp) => { if (!seen.has(sp.id)) out.push(sp); });
+    return normalizeProjects(out);
+  };
+
   const runPush = async (cfg) => {
     const s = cfg || syncRef.current;
     if (!s.on) return;
@@ -897,9 +919,15 @@ export default function App() {
     try {
       const res = await sbSave(projectsRef.current, revRef.current);
       if (res.conflict && res.data) {
-        await adopt(res.data, res.rev);
+        // 競合：以前はサーバ版で上書きしていたため、直前のローカル編集（リンク追加等）が消えていた。
+        // → 双方を統合し、dirtyのまま新しいrevを基準に再送する（ローカルの編集を失わない）
+        const merged = mergeStates(projectsRef.current, res.data);
+        revRef.current = res.rev; saveMeta();
+        setProjects(merged); projectsRef.current = merged;
+        try { window.storage.set(STORE_KEY, JSON.stringify(merged)); } catch {}
+        dirtyRef.current = true;
         lastPushedJsonRef.current = "";
-        setSyncState({ status: "ok", at: Date.now(), msg: "別の端末の変更を反映しました" });
+        setSyncState({ status: "ok", at: Date.now(), msg: "別端末の変更と統合しました" });
       } else {
         revRef.current = res.rev; dirtyRef.current = false; saveMeta();
         lastPushedJsonRef.current = nowJson;
