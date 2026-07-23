@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23m"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23n"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -814,7 +814,7 @@ export default function App() {
         const openTitles = (target.tasks || []).filter((t) => !t.done).map((t) => t.title).filter(Boolean);
         const j = await analyzeIncomingMsg(target.company, recentLog, openTitles);
         if (editingRef2.current) return; // 解析中に編集が始まったら破棄（次回やり直し）
-        const norm = (s) => String(s || "").toLowerCase().replace(/[\s　、。・…「」（）()【】\-—:：]/g, "");
+        const norm = (s) => String(s || "").toLowerCase().replace(/[\s　、。・…「」（）()【】\-—:：の]/g, "");
         const openNorms = (target.tasks || []).filter((t) => !t.done).map((t) => norm(t.title)).filter((s) => s.length >= 3);
         const dupOf = (title) => { const n = norm(title); if (n.length < 3) return false; return openNorms.some((o) => o === n || (n.length >= 5 && (o.includes(n) || n.includes(o)))); };
         const items = (j.tasks || []).filter((t) => t && t.title && !dupOf(t.title)).slice(0, 4)
@@ -3716,7 +3716,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
               ))}
               <div style={S.tsqBtns}>
                 <button style={S.tsqAdd} onClick={() => {
-                  const nrm = (s) => String(s || "").toLowerCase().replace(/[\s　、。・…「」（）()【】\-—:：]/g, "");
+                  const nrm = (s) => String(s || "").toLowerCase().replace(/[\s　、。・…「」（）()【】\-—:：の]/g, "");
                   const exist = d.tasks.filter((x) => !x.done).map((x) => nrm(x.title));
                   const adds = (d.tsq.items || []).filter((it) => { const n = nrm(it.title); return !(n.length >= 3 && exist.some((o) => o === n || (n.length >= 5 && (o.includes(n) || n.includes(o))))); }).map((it) => {
                     const t = task(it.title, null);
