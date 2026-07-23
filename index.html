@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23c"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23d"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -3671,6 +3671,15 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                   autoFocus={t.id === justAddedId}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); } }}
                   placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
+                {(() => { const lab = t.start ? dateLabelJP(t.start) : null; return (
+                  <span style={{ ...S.taskRowDate, ...(lab && lab.overdue ? { color: "#F28B82" } : {}) }} title="いつやる"
+                    onClick={(e) => { const inp = e.currentTarget.querySelector("input"); try { inp && inp.showPicker && inp.showPicker(); } catch {} }}>
+                    <input type="date" value={t.start || ""} style={S.cardDateHidden}
+                      onClick={(e) => e.stopPropagation()} onChange={(e) => setTask(t.id, "start", e.target.value)} />
+                    <CalendarDays size={14} strokeWidth={2.2} />
+                    {lab && <span style={{ whiteSpace: "nowrap" }}>{lab.text}</span>}
+                  </span>
+                ); })()}
                 {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ flexShrink: 0 }} />}
                 <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#8B95A5" /></button>
               </div>
@@ -5353,6 +5362,8 @@ const S = {
   // すべてタブのグループ枠：色バー＋左の細い縦ライン。paddingLeftとマイナスマージンを相殺してカード幅は不変
   // グループ全体を薄い色付きパネルで囲う。左右のマイナスマージンでカード幅は不変（外側余白を使う）
   focusGroup: { display: "grid", gap: 14, padding: "10px 12px 12px", margin: "0 -12px 6px -15px", borderRadius: 14 },
+  // 案件詳細のタスク行の「いつやる」チップ（タップで日付ピッカー）
+  taskRowDate: { display: "inline-flex", alignItems: "center", gap: 4, color: C.ink3, fontSize: 13.5, cursor: "pointer", flexShrink: 0, padding: "6px 3px", position: "relative" },
   // 並び替え矢印（↑↓）：極小・グレー。常時表示
   arrowPair: { display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0, marginLeft: 6 },
   arrowBtn: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: 6, color: C.ink3, cursor: "pointer", userSelect: "none" },
