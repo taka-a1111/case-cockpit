@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23g"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23h"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -701,7 +701,7 @@ export default function App() {
           if (m.error || !m.body) return;
           const pid = ridMap[String(m.rid)];
           if (!pid) return;
-          (byPid[pid] = byPid[pid] || []).push({ who: m.me ? "me" : "client", name: m.name || "", at: m.at || "", body: m.body, partial: false });
+          (byPid[pid] = byPid[pid] || []).push({ who: m.me ? "me" : "client", name: m.name || "", at: m.at || "", body: m.body, partial: false, rid: String(m.rid) });
         });
         if (!Object.keys(byPid).length) return;
         let changed = false;
@@ -5038,6 +5038,12 @@ function matchMailToProject(mail, projects) {
 // 返信先リンク：返信用(kind:reply)→Chatwork→CW/ランサーズ→最初のリンク の優先順
 const replyLinkOf = (p) => {
   const ls = ((p && p.links) || []).filter((l) => l.url);
+  // 複数のChatworkルームが登録されている場合、相手の最新メッセージが来たルームを最優先で開く
+  const lastCw = [...((p && p.msgs) || [])].reverse().find((m) => m.who === "client" && m.rid);
+  if (lastCw) {
+    const hit = ls.find((l) => (l.url || "").includes("#!rid" + lastCw.rid));
+    return hit || { id: "__cwroom__", label: "Chatwork", url: "https://www.chatwork.com/#!rid" + lastCw.rid };
+  }
   return ls.find((l) => l.kind === "reply")
     || ls.find((l) => /chatwork\.com/.test(l.url))
     || ls.find((l) => /crowdworks\.jp|lancers\.jp/.test(l.url))
