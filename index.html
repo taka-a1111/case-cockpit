@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23w"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23x"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -409,14 +409,7 @@ function laneOf(project, task) {
   // 日付なしタスク：案件ステータスに従う
   if (project.status === "相手待ち") return "waiting";
   if (project.status === "支払い待ち") return "payment";
-  // 進行中の日付なしタスク：案件の「いつやる」を引き継ぐ
-  if (project.start) {
-    const n = daysUntil(project.start);
-    if (n !== null) {
-      if (n <= 0) return "today";
-      if (n === 1) return "tomorrow";
-    }
-  }
+  // 日付なしタスク：明後日以降へ（案件の「いつやる」は廃止済みのため引き継がない）
   return "later";
 }
 // 完了から30日経過したタスクはアーカイブ（一覧に出さない。データは残る）
@@ -434,7 +427,7 @@ function taskInLane(project, task, lane) {
 function projectInLane(p, lane) {
   const l = projectFallbackLane(p);
   if (l === lane) return true;
-  return lane === "today" && (l === "waiting" || l === "payment") && dueArrived(p.start || p.deadline);
+  return lane === "today" && (l === "waiting" || l === "payment") && dueArrived(p.deadline);
 }
 // 未完了タスクが1つも無い案件のレーン判定。「すべて」の区分けと各タブの表示・件数を一致させるために使う
 function projectFallbackLane(p) {
@@ -442,7 +435,7 @@ function projectFallbackLane(p) {
   if ((p.tasks || []).some((t) => !t.done)) return null; // 未完了タスクがあればタスク側で判定
   if (p.status === "相手待ち") return "waiting";
   if (p.status === "支払い待ち") return "payment";
-  const n = daysUntil(p.start || p.deadline); // 案件startは廃止。旧データはstart優先、以後は納期で判定
+  const n = daysUntil(p.deadline); // 案件startは廃止済み。判定は納期のみ（カレンダー表示と一致させる）
   if (n !== null && n <= 0) return "today";
   if (n === 1) return "tomorrow";
   return "later";
@@ -1630,6 +1623,7 @@ export default function App() {
 function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, onReorderTask, onMoveTask, sortMode, setSortMode, onSetStatus, onOpenReply, onClearRsug, onAckSug, heldRank }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
+  const [addingTop, setAddingTop] = useState(false); // 右上「＋追加」（今日のタスクとして追加）
 
   const [dragId, setDragId] = useState(null);
   const [dragTaskId, setDragTaskId] = useState(null);
@@ -1901,6 +1895,16 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
       </div>
 
       <section>
+        <div style={S.focusAddRow}>
+          <button style={S.laneBarAdd} onClick={() => setAddingTop((a) => !a)}>
+            <Plus size={15} strokeWidth={2.6} /> 追加
+          </button>
+        </div>
+        {addingTop && (
+          <AddTaskInline projects={projects}
+            onAdd={(pid, title) => { onAddTask(pid, "today", title); setAddingTop(false); }}
+            onCancel={() => setAddingTop(false)} />
+        )}
         {cardList.length === 0 && <Empty text="進行中の案件がありません。" />}
         <div style={S.swipeArea}>
           {cardList.length > 0 && (
@@ -1924,11 +1928,12 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                 };
                 const groups = wide
                   ? [
-                      { key: "today",    label: "今日",       color: "#6B8AFF", items: cardList.filter((p) => laneP(p) === "today"), bar: true },
-                      { key: "tomorrow", label: "明日",       color: "#9AA4B2", items: cardList.filter((p) => laneP(p) === "tomorrow"), bar: true },
-                      { key: "later",    label: "明後日以降", color: "#9AA4B2", items: cardList.filter((p) => laneP(p) === "later"), bar: true },
-                      { key: "waiting", label: "相手待ち",   color: "#D9A23B", items: cardList.filter((p) => laneP(p) === "waiting"), bar: true },
-                      { key: "payment", label: "支払い待ち", color: "#51CF66", items: cardList.filter((p) => laneP(p) === "payment"), bar: true },
+                      // 相手待ち/支払い待ちはスマホと同じく「案件ステータス」で区切る（タスク有無に関わらずまとめる）
+                      { key: "today",    label: "今日",       color: "#6B8AFF", items: cardList.filter((p) => p.status !== "相手待ち" && p.status !== "支払い待ち" && laneP(p) === "today"), bar: true },
+                      { key: "tomorrow", label: "明日",       color: "#9AA4B2", items: cardList.filter((p) => p.status !== "相手待ち" && p.status !== "支払い待ち" && laneP(p) === "tomorrow"), bar: true },
+                      { key: "later",    label: "明後日以降", color: "#9AA4B2", items: cardList.filter((p) => p.status !== "相手待ち" && p.status !== "支払い待ち" && laneP(p) !== "today" && laneP(p) !== "tomorrow"), bar: true },
+                      { key: "waiting", label: "相手待ち",   color: "#D9A23B", items: cardList.filter((p) => p.status === "相手待ち"), bar: true },
+                      { key: "payment", label: "支払い待ち", color: "#51CF66", items: cardList.filter((p) => p.status === "支払い待ち"), bar: true },
                     ]
                   : [
                       { key: "進行中",     label: "進行中",     color: "#C0C9D6", items: cardList.filter((p) => { const l = laneP(p); return l !== "waiting" && l !== "payment"; }), bar: false },
@@ -5582,6 +5587,7 @@ const S = {
   // すべてタブのグループ枠：色バー＋左の細い縦ライン。paddingLeftとマイナスマージンを相殺してカード幅は不変
   // グループ全体を薄い色付きパネルで囲う。左右のマイナスマージンでカード幅は不変（外側余白を使う）
   focusGroup: { display: "grid", gap: 14, padding: "10px 12px 12px", margin: "0 -12px 6px -15px", borderRadius: 14 },
+  focusAddRow: { display: "flex", justifyContent: "flex-end", maxWidth: 720, margin: "0 auto 2px" },
   // 案件詳細のタスク行の「いつやる」チップ（タップで日付ピッカー）
   taskRowDate: { display: "inline-flex", alignItems: "center", gap: 4, color: C.ink3, fontSize: 13.5, cursor: "pointer", flexShrink: 0, padding: "6px 3px", position: "relative" },
   // タスク削除の2タップ確認状態
@@ -5935,12 +5941,12 @@ const S = {
   focusBoardCount: { fontSize: 12.5, fontWeight: 700, color: C.ink3 },
   focusGroupBar: { display: "flex", alignItems: "center", gap: 8, padding: "8px 13px", borderRadius: 10, fontSize: 14, fontWeight: 800, fontFamily: F.disp, letterSpacing: 0.3, marginTop: 4 },
   focusGroupCount: { fontSize: 12, fontWeight: 700, color: C.ink3 },
-  taskTab: { position: "relative", display: "flex", alignItems: "center", gap: 7, flexShrink: 0, border: `1px solid ${C.line}`, background: C.panel2, padding: "9px 14px", fontSize: 14, fontWeight: 700, color: C.ink2, whiteSpace: "nowrap", borderRadius: 10 },
-  taskTabOn: { background: C.accent, borderColor: C.accent, color: "#fff" },
+  taskTab: { position: "relative", display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0, border: "none", borderBottom: "3px solid transparent", background: "transparent", padding: "9px 13px 10px", fontSize: 15, fontWeight: 700, color: C.ink3, whiteSpace: "nowrap", cursor: "pointer", borderRadius: 0 },
+  taskTabOn: { background: "transparent", color: C.ink, borderBottom: `3px solid ${C.accent}` },
   taskTabOver: { borderColor: C.accent, background: "rgba(107,138,255,0.18)" },
   taskTabDot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
-  taskTabCount: { fontFamily: F.disp, fontSize: 14, fontWeight: 800, padding: "1px 7px", borderRadius: 20, background: "#161A20", color: C.ink2, minWidth: 18, textAlign: "center" },
-  taskTabCountOn: { background: "rgba(255,255,255,0.25)", color: "#fff" },
+  taskTabCount: { fontSize: 12, fontWeight: 700, color: C.ink3 },
+  taskTabCountOn: { color: C.accent },
   taskTabBar: { position: "absolute", left: 10, right: 10, bottom: -1.5, height: 2.5, borderRadius: 2 },
 
   laneBar: { display: "flex", alignItems: "center", gap: 9 },
