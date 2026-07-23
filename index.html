@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23d"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23e"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -3245,6 +3245,14 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
   const [copied, setCopied] = useState(false);
   const [autoSaved, setAutoSaved] = useState(false);
   const [hideDoneTasks, setHideDoneTasks] = useState(true);
+  const [confirmDelTask, setConfirmDelTask] = useState(null); // タスク削除の2タップ確認（対象タスクID）
+  const cdtTimer = useRef(null);
+  const askDelTask = (id) => {
+    if (confirmDelTask === id) { clearTimeout(cdtTimer.current); setConfirmDelTask(null); delTask(id); return; }
+    setConfirmDelTask(id);
+    clearTimeout(cdtTimer.current);
+    cdtTimer.current = setTimeout(() => setConfirmDelTask(null), 2000); // 2秒で自動キャンセル
+  };
   const isNew = !draft.company && draft.tasks.length === 0;
   const set = (k, v) => setD((p) => ({ ...p, [k]: v }));
   const focusTask = focusTaskId ? d.tasks.find((t) => t.id === focusTaskId) : null;
@@ -3681,7 +3689,10 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                   </span>
                 ); })()}
                 {t.repeat && <Repeat size={13} color={C.accent} strokeWidth={2.6} style={{ flexShrink: 0 }} />}
-                <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#8B95A5" /></button>
+                <button style={{ ...S.iconBtnSm, ...(confirmDelTask === t.id ? S.taskDelConfirm : {}) }} title={confirmDelTask === t.id ? "もう一度タップで削除" : "タスクを削除"}
+                  onClick={() => askDelTask(t.id)}>
+                  <Trash2 size={14} color={confirmDelTask === t.id ? "#FF6B6B" : "#8B95A5"} />{confirmDelTask === t.id && <span style={S.taskDelConfirmText}>削除?</span>}
+                </button>
               </div>
             ))}
             <button style={S.taskAddRow} onClick={addTask}>
@@ -3701,7 +3712,10 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                     <AutoHeightTextarea style={{ ...S.taskInput, ...S.trowDone, background: "transparent", border: "none", padding: "8px 0", fontSize: 16.5 }} value={t.title}
                       onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); } }}
                       placeholder="やること" onChange={(e) => setTask(t.id, "title", e.target.value)} />
-                    <button style={S.iconBtnSm} onClick={() => delTask(t.id)}><Trash2 size={14} color="#8B95A5" /></button>
+                    <button style={{ ...S.iconBtnSm, ...(confirmDelTask === t.id ? S.taskDelConfirm : {}) }} title={confirmDelTask === t.id ? "もう一度タップで削除" : "タスクを削除"}
+                  onClick={() => askDelTask(t.id)}>
+                  <Trash2 size={14} color={confirmDelTask === t.id ? "#FF6B6B" : "#8B95A5"} />{confirmDelTask === t.id && <span style={S.taskDelConfirmText}>削除?</span>}
+                </button>
                   </div>
                 ))}
               </>
@@ -5364,6 +5378,9 @@ const S = {
   focusGroup: { display: "grid", gap: 14, padding: "10px 12px 12px", margin: "0 -12px 6px -15px", borderRadius: 14 },
   // 案件詳細のタスク行の「いつやる」チップ（タップで日付ピッカー）
   taskRowDate: { display: "inline-flex", alignItems: "center", gap: 4, color: C.ink3, fontSize: 13.5, cursor: "pointer", flexShrink: 0, padding: "6px 3px", position: "relative" },
+  // タスク削除の2タップ確認状態
+  taskDelConfirm: { background: "rgba(255,107,107,0.13)", borderRadius: 7 },
+  taskDelConfirmText: { color: "#FF6B6B", fontSize: 12.5, fontWeight: 700, marginLeft: 3 },
   // 並び替え矢印（↑↓）：極小・グレー。常時表示
   arrowPair: { display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0, marginLeft: 6 },
   arrowBtn: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: 6, color: C.ink3, cursor: "pointer", userSelect: "none" },
