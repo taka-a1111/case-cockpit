@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23ac"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23ad"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -1332,6 +1332,9 @@ export default function App() {
   // カードから返信案を消す／その場で生成する
   const clearRsug = (pid) =>
     persist((projectsRef.current || []).map((p) => p.id !== pid ? p : { ...p, rsug: null }));
+  // 返信アシストからClaudeプロジェクト等のリンクを登録する
+  const addProjectLink = (pid, url, label) =>
+    persist((projectsRef.current || []).map((p) => p.id !== pid ? p : { ...p, links: [...(p.links || []), { id: uid(), label: label || "", url }] }));
   // サジェストの✕却下＝返信済み扱い（アイコンリアクション運用向け）。新着メッセージが来るまで再提案しない
   const ackSug = (pid) =>
     persist((projectsRef.current || []).map((p) => p.id !== pid ? p : { ...p, sugAckAt: new Date().toISOString() }));
@@ -1619,7 +1622,7 @@ export default function App() {
       {replyFor && (() => {
         const p = projects.find((x) => x.id === replyFor);
         if (!p) return null;
-        return <ReplySheet project={p} onClose={goBack} onSaveRsug={saveRsug} onMarkSent={markSent} />;
+        return <ReplySheet project={p} onClose={goBack} onSaveRsug={saveRsug} onMarkSent={markSent} onAddLink={addProjectLink} />;
       })()}
 
       {/* ===== 右下フローティング＋ボタン（Googleカレンダー方式） ===== */}
@@ -3083,7 +3086,9 @@ function AddTaskInline({ projects, onAdd, onCancel }) {
    ============================================================ */
 // ==================== 返信アシストシート ====================
 // 直近のメッセージ＋返信候補＋コピー。候補が無ければ開いた瞬間に強制生成。
-function ReplySheet({ project, onClose, onSaveRsug, onMarkSent }) {
+function ReplySheet({ project, onClose, onSaveRsug, onMarkSent, onAddLink }) {
+  const [claudeReg, setClaudeReg] = useState(false);   // Claudeリンク未登録時の登録UI
+  const [claudeUrl, setClaudeUrl] = useState("");
   const wide = useWideScreen();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -3117,13 +3122,15 @@ function ReplySheet({ project, onClose, onSaveRsug, onMarkSent }) {
     if (!pending) { setConsultNote("相手のメッセージ本文がログにありません。先に本文を取り込んでください"); return; }
     const prompt = "次のメッセージを頂きました。それに対する返信文を作ってください。簡潔に書いてください。\n\n" + pending;
     const ok = await copyText(prompt);
-    const link = claudeProjectLinkOf(project);
+    const link = claudeProjectLinkOf(project) || ((project.links || []).find((l) => /claude\.ai\//.test(l.url || "")));
     setConsultNote(ok
-      ? (link ? "プロンプトをコピーしました。開いたClaudeに貼り付けてください" : "プロンプトをコピーしました。Claudeに貼り付けてください（リンク欄にClaudeのURLを登録すると自動で開きます）")
+      ? (link ? "プロンプトをコピーしました。開いたClaudeに貼り付けてください" : "プロンプトはコピー済みです。この案件のClaudeプロジェクトURLを登録してください")
       : "コピーに失敗しました");
     if (link) {
       const iu = isAndroidUA() ? claudeIntentUrl(link.url) : null;
       if (iu) window.location.href = iu; else window.open(link.url, "_blank", "noopener");
+    } else {
+      setClaudeReg(true); // 未登録：その場で登録できるUIを表示
     }
   };
   const consult = async () => {
@@ -3201,6 +3208,21 @@ function ReplySheet({ project, onClose, onSaveRsug, onMarkSent }) {
                 <button style={S.rshChoiceMain} onClick={claudeQuick}>
                   <MessageCircle size={14} strokeWidth={2.4} />Claudeで返信を作る（本文コピー＋開く・プラン内）
                 </button>
+                {claudeReg && (
+                  <div style={S.claudeRegRow}>
+                    <input style={S.claudeRegInput} placeholder="ClaudeプロジェクトのURLを貼り付け" value={claudeUrl}
+                      onChange={(e) => setClaudeUrl(e.target.value)} />
+                    <button style={S.claudeRegBtn} onClick={() => {
+                      const u = claudeUrl.trim();
+                      if (!/^https:\/\/claude\.ai\//.test(u)) { setConsultNote("claude.ai のURLを貼り付けてください"); return; }
+                      onAddLink && onAddLink(project.id, u, "Claude");
+                      setClaudeReg(false); setClaudeUrl("");
+                      setConsultNote("Claudeリンクを登録して開きました。貼り付けてください");
+                      const iu = isAndroidUA() ? claudeIntentUrl(u) : null;
+                      if (iu) window.location.href = iu; else window.open(u, "_blank", "noopener");
+                    }}>登録して開く</button>
+                  </div>
+                )}
                 {consultNote && <div style={S.rshNote}>{consultNote}</div>}
               </div>
             );
@@ -5584,6 +5606,10 @@ const S = {
   triSticky: { position: "sticky", top: 0, zIndex: 15, background: C.bg, paddingTop: 2, paddingBottom: 4 },
   // 通常表示（スマホ等）：タブ行をヘッダ直下に固定。左右いっぱいに広げて下の内容が透けないようにする
   mobileStickyTabs: { position: "sticky", top: 52, zIndex: 15, background: C.bg, margin: "0 -16px", padding: "2px 16px 4px" },
+  // 返信アシスト内のClaudeリンク登録UI
+  claudeRegRow: { display: "flex", gap: 8, marginTop: 9 },
+  claudeRegInput: { flex: 1, minWidth: 0, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 9, color: C.ink, padding: "9px 11px", fontSize: 14 },
+  claudeRegBtn: { flexShrink: 0, border: "none", background: "rgba(107,138,255,0.16)", color: C.accent, borderRadius: 9, padding: "9px 12px", fontSize: 13.5, fontWeight: 700, whiteSpace: "nowrap", cursor: "pointer" },
   triStickyTabs: { position: "sticky", top: 0, zIndex: 15, background: C.bg, paddingTop: 2, paddingBottom: 4, marginBottom: 10 },
   // すべてタブのグループ枠：色バー＋左の細い縦ライン。paddingLeftとマイナスマージンを相殺してカード幅は不変
   // グループ全体を薄い色付きパネルで囲う。左右のマイナスマージンでカード幅は不変（外側余白を使う）
