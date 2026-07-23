@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23s"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23t"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -4729,6 +4729,7 @@ function linkInfo(url) {
   if (url.includes("crowdworks")) return { label: "クラウドワークスを開く", short: "CW", color: "#6B8AFF" };
   if (url.includes("lancers")) return { label: "ランサーズを開く", short: "ランサーズ", color: "#6B8AFF" };
   if (url.includes("coconala")) return { label: "ココナラを開く", short: "ココナラ", color: "#6B8AFF" };
+  if (url.includes("mail.google")) return { label: "Gmailを開く", short: "Gmail", color: "#6B8AFF" };
   return { label: "返信先を開く", short: "開く", color: C.accent };
 }
 // 案件リンク（links[]）のラベル/短縮名を決める。ユーザー指定ラベルを最優先、無ければURLから推定。
@@ -4742,6 +4743,7 @@ function urlAutoLabel(url) {
   if (/crowdworks/.test(url)) return "CW";
   if (/lancers/.test(url)) return "Lancers";
   if (/coconala/.test(url)) return "Coconala";
+  if (/mail\.google\.com/.test(url)) return "Gmail";
   if (/docs\.google\.com\/document/.test(url)) return "Docs";
   if (/docs\.google\.com\/spreadsheets/.test(url)) return "Sheet";
   if (/docs\.google\.com\/presentation/.test(url)) return "Slide";
@@ -5214,6 +5216,7 @@ function linkIconOf(l) {
   if (lab === "cw" || url.includes("crowdworks")) return { Icon: Briefcase, color: "#4CAF50" };
   if (has("lancers")) return { Icon: Briefcase, color: "#00A0DC" };
   if (has("coconala")) return { Icon: Briefcase, color: "#F7A800" };
+  if (has("mail.google.com") || lab === "gmail") return { Icon: MessageCircle, color: "#EA4335" };
   if (has("docs.google.com/document") || lab === "docs") return { Icon: FileText, color: "#4285F4" };
   if (has("docs.google.com/spreadsheets") || lab === "sheet") return { Icon: Table, color: "#0F9D58" };
   if (has("docs.google.com/presentation") || lab === "slide") return { Icon: FileText, color: "#F4B400" };
