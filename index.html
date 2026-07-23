@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23p"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23q"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -686,11 +686,16 @@ export default function App() {
       if (stopped || editingRef2.current) return; // 編集中は上書き事故を避けるためスキップ
       try {
         const ps = projectsRef.current || [];
-        const ridMap = {};
+        // 同じルームが複数案件に登録されている場合は、後から作った案件（窓口など）を優先して振り分ける
+        const ridOwner = {};
         ps.forEach((p) => (p.links || []).forEach((l) => {
           const m = (l.url || "").match(/chatwork\.com\/#!rid(\d+)/);
-          if (m) ridMap[m[1]] = p.id;
+          if (!m) return;
+          const cur = ridOwner[m[1]];
+          if (!cur || (p.createdAt || 0) > (cur.createdAt || 0)) ridOwner[m[1]] = p;
         }));
+        const ridMap = {};
+        Object.keys(ridOwner).forEach((k) => { ridMap[k] = ridOwner[k].id; });
         const rids = Object.keys(ridMap);
         if (!rids.length) return;
         const res = await fetch(`${CW_FETCH_URL}?action=msgs&t=${encodeURIComponent(CW_FETCH_TOKEN)}&rooms=${rids.join(",")}`);
