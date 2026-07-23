@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23f"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23g"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -3674,7 +3674,7 @@ function Drawer({ draft, focusTaskId, onClose, onSave, onAutoSave, onDelete, con
                   const t = task(d.tsq.title, null);
                   t.note = d.tsq.note || "";
                   t.due = d.tsq.due || "";                       // 期限：メッセージに明記があった場合のみ
-                  t.start = d.tsq.urgent ? dStr(0) : dStr(1);    // いつやる：緊急=今日、通常=明日
+                  t.start = (d.tsq.urgent || new Date().getHours() < 17) ? dStr(0) : dStr(1); // いつやる：急ぎ or 17時前=今日／17時以降=明日
                   setD((p) => ({ ...p, tasks: [...p.tasks, t], tsq: null }));
                 }}>タスクに追加</button>
                 <button style={S.tsqIgnore} onClick={() => set("tsq", null)}>無視</button>
