@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23ad"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23ae"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -3124,14 +3124,31 @@ function ReplySheet({ project, onClose, onSaveRsug, onMarkSent, onAddLink }) {
     const ok = await copyText(prompt);
     const link = claudeProjectLinkOf(project) || ((project.links || []).find((l) => /claude\.ai\//.test(l.url || "")));
     setConsultNote(ok
-      ? (link ? "プロンプトをコピーしました。開いたClaudeに貼り付けてください" : "プロンプトはコピー済みです。この案件のClaudeプロジェクトURLを登録してください")
+      ? (link ? "プロンプトをコピーしました。開いたClaudeに貼り付けてください" : "プロンプトをコピーして新規チャットを開きました。プロジェクトURLを下に登録すると次回からそこが開きます")
       : "コピーに失敗しました");
     if (link) {
       const iu = isAndroidUA() ? claudeIntentUrl(link.url) : null;
       if (iu) window.location.href = iu; else window.open(link.url, "_blank", "noopener");
     } else {
-      setClaudeReg(true); // 未登録：その場で登録できるUIを表示
+      // 未登録：新規チャットを開く（＋その場で登録できるUIも表示）
+      setClaudeReg(true);
+      const nu = "https://claude.ai/new";
+      const iu = isAndroidUA() ? claudeIntentUrl(nu) : null;
+      if (iu) window.location.href = iu; else window.open(nu, "_blank", "noopener");
     }
+  };
+  // フッター用：常に新規チャットで作る（本文コピー＋claude.ai/newを開く）
+  const claudeNew = async () => {
+    const allM = project.msgs || [];
+    let lm = -1;
+    for (let i = allM.length - 1; i >= 0; i--) { if (allM[i].who === "me") { lm = i; break; } }
+    const pending = allM.slice(lm + 1)
+      .filter((m) => m.who === "client" && m.src !== "cwmail" && m.src !== "lancersnotice" && (m.body || "").trim())
+      .map((m) => m.body.trim()).join("\n\n");
+    if (pending) await copyText("次のメッセージを頂きました。それに対する返信文を作ってください。簡潔に書いてください。\n\n" + pending);
+    const nu = "https://claude.ai/new";
+    const iu = isAndroidUA() ? claudeIntentUrl(nu) : null;
+    if (iu) window.location.href = iu; else window.open(nu, "_blank", "noopener");
   };
   const consult = async () => {
     const ok = await copyText(buildClaudeContext(project));
@@ -3229,8 +3246,8 @@ function ReplySheet({ project, onClose, onSaveRsug, onMarkSent, onAddLink }) {
           })()}
         </div>
         <div style={S.drawerFoot}>
-          <button style={S.rshRegen} onClick={() => setShowChoice(true)} disabled={busy}>
-            <Repeat size={14} strokeWidth={2.4} />{busy ? "生成中…" : "作り直す"}
+          <button style={S.rshRegen} onClick={claudeNew} title="本文をコピーしてClaudeの新規チャットを開く">
+            <MessageCircle size={14} strokeWidth={2.4} />新規チャット
           </button>
           <div style={{ flex: 1 }} />
           <button style={S.rshCopyBtn} onClick={doCopy} disabled={!text || busy}>
@@ -3241,11 +3258,6 @@ function ReplySheet({ project, onClose, onSaveRsug, onMarkSent, onAddLink }) {
               <ExternalLink size={14} strokeWidth={2.4} />{rlinkLabel}
             </a>
           )}
-          <button style={S.rshSentBtn} disabled={!text || busy}
-            title="この返信文を自分の発言としてログに記録し、返信アシストを消します"
-            onClick={() => { if (text && onMarkSent) { onMarkSent(project.id, text); onClose(); } }}>
-            <CheckCircle2 size={15} strokeWidth={2.4} />送信済みにする
-          </button>
         </div>
       </div>
     </>
