@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23z"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23aa"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -3181,34 +3181,11 @@ function ReplySheet({ project, onClose, onSaveRsug, onMarkSent }) {
             }
             // 重さ判定：自分の最後の返信以降の相手メッセージをまとめて評価
             const pending = recent.filter((m) => m.who === "client").map((m) => m.body).join("\n");
-            const heavy = classifyReplyWeight(pending) === "claude";
             return (
               <div style={S.rshChoice}>
                 <button style={S.rshChoiceMain} onClick={claudeQuick}>
                   <MessageCircle size={14} strokeWidth={2.4} />Claudeで返信を作る（本文コピー＋開く・プラン内）
                 </button>
-                <div style={S.rshJudge}>
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: heavy ? C.accent : "#51CF66", flexShrink: 0 }} />
-                  {heavy ? "重要な判断（金額・方針・構成など）を含む可能性があります" : "定型的な内容と判定しました"}
-                </div>
-                {heavy ? (
-                  <>
-                    <div style={S.rshChoiceRow}>
-                      <button style={S.rshChoiceSub} onClick={() => gen("claude-opus-4-8")}>Opusで作る（高精度・十数円）</button>
-                      <button style={S.rshChoiceSub} onClick={() => gen("claude-sonnet-4-6")}>Sonnetで作る（約1円）</button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <button style={S.rshChoiceMain} onClick={() => gen("claude-sonnet-4-6")}>
-                      <Reply size={14} strokeWidth={2.4} />Sonnetで返信案を作る（推奨・約1円）
-                    </button>
-                    <div style={S.rshChoiceRow}>
-                      <button style={S.rshChoiceSub} onClick={() => gen("claude-opus-4-8")}>Opusで作る</button>
-                      <button style={S.rshChoiceSub} onClick={consult}>Claudeで相談</button>
-                    </div>
-                  </>
-                )}
                 {consultNote && <div style={S.rshNote}>{consultNote}</div>}
               </div>
             );
