@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23b"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -675,6 +675,8 @@ export default function App() {
     } catch {}
   }, []);
   // Chatwork自動取得：リンク欄のルームURLから対象を特定し、5分おき＋復帰時に新着をログ欄へ追記
+  const cwPullRef = useRef(null);    // 起動時に同期完了後すぐ叩くための参照
+  const gmailPullRef = useRef(null);
   const editingRef2 = useRef(null);
   useEffect(() => { editingRef2.current = editing; }, [editing]);
   useEffect(() => {
@@ -713,7 +715,8 @@ export default function App() {
         if (changed && !stopped && !editingRef2.current) persist(next);
       } catch {}
     };
-    const t0 = setTimeout(pull, 4000); // 起動直後は同期の取り込みを待ってから
+    cwPullRef.current = pull;
+    const t0 = setTimeout(pull, 4000); // フォールバック（通常は同期完了フックで先に走る）
     const iv = setInterval(pull, 5 * 60 * 1000);
     const onVis = () => { if (document.visibilityState === "visible") pull(); };
     document.addEventListener("visibilitychange", onVis);
@@ -760,7 +763,8 @@ export default function App() {
         if (changed && !stopped && !editingRef2.current) persist(next);
       } catch {}
     };
-    const t0 = setTimeout(pull, 7000);
+    gmailPullRef.current = pull;
+    const t0 = setTimeout(pull, 7000); // フォールバック（通常は同期完了フックで先に走る）
     const iv = setInterval(pull, 10 * 60 * 1000);
     const onVis = () => { if (document.visibilityState === "visible") pull(); };
     document.addEventListener("visibilitychange", onVis);
@@ -1000,6 +1004,11 @@ export default function App() {
           setSyncState({ status: "error", at: Date.now(), msg: String(e.message || e) });
         }
       }
+      // 同期の取り込みが済んだので、Chatwork/Gmailの新着も即取得（従来は固定4〜7秒待ちだった）
+      setTimeout(() => {
+        try { cwPullRef.current && cwPullRef.current(); } catch {}
+        try { gmailPullRef.current && gmailPullRef.current(); } catch {}
+      }, 300);
     })();
   }, []);
 
@@ -1830,15 +1839,13 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                 return groups.map((g) => {
                   if (g.items.length === 0) return null;
                   return (
-                    <React.Fragment key={g.key}>
-                      {g.bar && (
-                        <div style={{ ...S.focusGroupBar, background: g.color + "1A", border: `1px solid ${g.color}33`, color: g.color }}>
-                          <span>{g.label}</span>
-                          <span style={{ ...S.focusGroupCount, color: g.color }}>{g.items.length}</span>
-                        </div>
-                      )}
+                    <div key={g.key} style={{ ...S.focusGroup, borderLeft: `3px solid ${g.color}55` }}>
+                      <div style={{ ...S.focusGroupBar, background: g.color + "1A", border: `1px solid ${g.color}33`, color: g.color, marginTop: 0 }}>
+                        <span>{g.label}</span>
+                        <span style={{ ...S.focusGroupCount, color: g.color }}>{g.items.length}</span>
+                      </div>
                       {g.items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} onTaskDrag={startTaskDrag} taskDragId={dragTaskId} onSetStatus={onSetStatus} onOpenReply={onOpenReply} onClearRsug={onClearRsug} onArrow={arrowMove} onAckSug={onAckSug} />)}
-                    </React.Fragment>
+                    </div>
                   );
                 });
               })()}
@@ -2311,7 +2318,9 @@ function FilterChips({ projects, filter, onChange }) {
           <button key={f.key} data-fkey={f.key} onClick={() => onChange(f.key)}
             style={{ ...S.filterChip, ...(on ? S.filterChipOn : {}) }}>
             {f.label}
-            <span style={{ ...S.filterChipCount, ...(on ? { color: C.accent } : {}) }}>{focusFilterCount(projects, f.key)}</span>
+            {f.key !== "registry" && (
+              <span style={{ ...S.filterChipCount, ...(on ? { color: C.accent } : {}) }}>{focusFilterCount(projects, f.key)}</span>
+            )}
           </button>
         );
       })}
@@ -2623,8 +2632,10 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
         if (gmap.has(p.id)) return;
         if (projectInLane(p, lane)) { const g = { project: p, tasks: [] }; gmap.set(p.id, g); groups.push(g); }
       });
+      // すべてタブと同じ並びに統一：ステータス順（進行中→相手待ち→支払い待ち）を最優先、その中は案件の並び順
       const order = new Map(projects.map((p, i) => [p.id, i]));
-      groups.sort((a, b) => (order.get(a.project.id) ?? 0) - (order.get(b.project.id) ?? 0));
+      const sRank = (p) => (p.status === "相手待ち" ? 1 : p.status === "支払い待ち" ? 2 : 0);
+      groups.sort((a, b) => (sRank(a.project) - sRank(b.project)) || ((order.get(a.project.id) ?? 0) - (order.get(b.project.id) ?? 0)));
     }
     return groups;
   };
@@ -5339,6 +5350,8 @@ const S = {
   mainTri: { maxWidth: 1720 }, // PC 3画面横並び時は広く使う
   triRow: { display: "grid", gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr)", gap: 24, alignItems: "start" },
   triCol: { minWidth: 0 },
+  // すべてタブのグループ枠：色バー＋左の細い縦ライン。paddingLeftとマイナスマージンを相殺してカード幅は不変
+  focusGroup: { display: "grid", gap: 14, paddingLeft: 11, marginLeft: -14 },
   // 並び替え矢印（↑↓）：極小・グレー。常時表示
   arrowPair: { display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0, marginLeft: 6 },
   arrowBtn: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: 6, color: C.ink3, cursor: "pointer", userSelect: "none" },
