@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23ap"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-24a"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -1339,6 +1339,13 @@ export default function App() {
   // カードから返信案を消す／その場で生成する
   const clearRsug = (pid) =>
     persist((projectsRef.current || []).map((p) => p.id !== pid ? p : { ...p, rsug: null }));
+  // 手動で「返信不要」にする（返信アシストを引っ込める＋古い返信候補を破棄）
+  const markNoReply = (pid) =>
+    persist((projectsRef.current || []).map((p) => {
+      if (p.id !== pid) return p;
+      const cm = [...(p.msgs || [])].reverse().find((m) => m.who === "client" && m.id);
+      return { ...p, rsug: null, rneed: { srcId: cm ? cm.id : "", need: false, v: 2 } };
+    }));
   // 返信アシストからClaudeプロジェクト等のリンクを登録する
   const addProjectLink = (pid, url, label) =>
     persist((projectsRef.current || []).map((p) => p.id !== pid ? p : { ...p, links: [...(p.links || []), { id: uid(), label: label || "", url }] }));
@@ -1552,11 +1559,11 @@ export default function App() {
                 <FilterChips projects={projects} filter={focusFilter} onChange={setFocusFilter} />
               </div>
               {focusFilter === "registry" && <ProjectListView projects={projects} onOpen={openProject} onReorderLinks={reorderLinks} />}
-              {focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} onReorderTask={reorderTaskVisual} onMoveTask={moveTaskToProject} sortMode={sortMode} setSortMode={setSortMode} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onClearRsug={clearRsug} onAckSug={ackSug} heldRank={held.projRank} />}
-              {focusFilter !== "all" && focusFilter !== "registry" && <TasksView singleLane projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderProject={reorderVisual} onSortManual={() => setSortMode("manual")} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onAckSug={ackSug} activeLane={focusFilter} setActiveLane={setFocusFilter} heldLane={held.taskLane} />}
+              {focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} onReorderTask={reorderTaskVisual} onMoveTask={moveTaskToProject} sortMode={sortMode} setSortMode={setSortMode} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onNoReply={markNoReply} onAckSug={ackSug} heldRank={held.projRank} />}
+              {focusFilter !== "all" && focusFilter !== "registry" && <TasksView singleLane projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderProject={reorderVisual} onSortManual={() => setSortMode("manual")} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onAckSug={ackSug} onNoReply={markNoReply} activeLane={focusFilter} setActiveLane={setFocusFilter} heldLane={held.taskLane} />}
             </div>
             <div style={S.triCol}>
-              <TasksView forceNarrow projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderProject={reorderVisual} onSortManual={() => setSortMode("manual")} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onAckSug={ackSug} activeLane={paneLane} setActiveLane={setPaneLane} heldLane={held.taskLane} />
+              <TasksView forceNarrow projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderProject={reorderVisual} onSortManual={() => setSortMode("manual")} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onAckSug={ackSug} onNoReply={markNoReply} activeLane={paneLane} setActiveLane={setPaneLane} heldLane={held.taskLane} />
             </div>
             <div style={S.triCol}>
               <CalendarView projects={projects} onOpen={openProject} forceNarrow />
@@ -1566,8 +1573,8 @@ export default function App() {
           <>
             {view === "focus" && <FilterChips projects={projects} filter={focusFilter} onChange={setFocusFilter} />}
             {view === "focus" && focusFilter === "registry" && <ProjectListView projects={projects} onOpen={openProject} onReorderLinks={reorderLinks} />}
-            {view === "focus" && focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} onReorderTask={reorderTaskVisual} onMoveTask={moveTaskToProject} sortMode={sortMode} setSortMode={setSortMode} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onClearRsug={clearRsug} onAckSug={ackSug} heldRank={held.projRank} />}
-            {view === "focus" && focusFilter !== "all" && focusFilter !== "registry" && <TasksView singleLane projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderProject={reorderVisual} onSortManual={() => setSortMode("manual")} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onAckSug={ackSug} activeLane={focusFilter} setActiveLane={setFocusFilter} heldLane={held.taskLane} />}
+            {view === "focus" && focusFilter === "all" && <FocusView kpi={kpi} projects={active} allProjects={projects} onOpen={openProject} onSetDeadline={setDeadline} onAddTask={addTaskToLane} onUpdateTask={updateTask} onReorder={reorderVisual} onReorderCommit={commitOrder} onEditTask={(pid, tid, focus) => setEditTask({ pid, tid, focus })} onToggleTask={toggleTask} onToggleProject={toggleProjectDone} onReorderTask={reorderTaskVisual} onMoveTask={moveTaskToProject} sortMode={sortMode} setSortMode={setSortMode} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onNoReply={markNoReply} onAckSug={ackSug} heldRank={held.projRank} />}
+            {view === "focus" && focusFilter !== "all" && focusFilter !== "registry" && <TasksView singleLane projects={projects} onToggle={toggleTask} onOpen={openProject} onOpenTask={openProjectTask} onEditTask={(pid, tid) => setEditTask({ pid, tid, focus: "title" })} onChangeLane={changeLane} onChangeDue={changeDue} onChangeStart={changeStart} onChangeKind={changeKind} onAddTask={addTaskToLane} onReorderTask={reorderTaskVisual} onReorderProject={reorderVisual} onSortManual={() => setSortMode("manual")} onReorderCommit={commitOrder} onToggleProject={toggleProjectDone} onSetStatus={setProjectStatus} onOpenReply={(pid) => setReplyFor(pid)} onAckSug={ackSug} onNoReply={markNoReply} activeLane={focusFilter} setActiveLane={setFocusFilter} heldLane={held.taskLane} />}
             {view === "calendar" && <CalendarView projects={projects} onOpen={openProject} />}
           </>
         )}
@@ -1637,7 +1644,7 @@ export default function App() {
       {replyFor && (() => {
         const p = projects.find((x) => x.id === replyFor);
         if (!p) return null;
-        return <ReplySheet project={p} onClose={goBack} onSaveRsug={saveRsug} onMarkSent={markSent} onAddLink={addProjectLink} />;
+        return <ReplySheet project={p} onClose={goBack} onSaveRsug={saveRsug} onMarkSent={markSent} onAddLink={addProjectLink} onNoReply={markNoReply} />;
       })()}
 
       {/* ===== 右下フローティング＋ボタン（Googleカレンダー方式） ===== */}
@@ -1653,7 +1660,7 @@ export default function App() {
 /* ============================================================
    フォーカス（ダッシュボード）
    ============================================================ */
-function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, onReorderTask, onMoveTask, sortMode, setSortMode, onSetStatus, onOpenReply, onClearRsug, onAckSug, heldRank }) {
+function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTask, onUpdateTask, onReorder, onReorderCommit, onEditTask, onToggleTask, onToggleProject, onReorderTask, onMoveTask, sortMode, setSortMode, onSetStatus, onOpenReply, onNoReply, onAckSug, heldRank }) {
   const [openCard, setOpenCard] = useState(null);
   const [openMsg, setOpenMsg] = useState(null);
   const [addingTop, setAddingTop] = useState(false); // 右上「＋追加」（今日のタスクとして追加）
@@ -1982,7 +1989,7 @@ function FocusView({ kpi, projects, allProjects, onOpen, onSetDeadline, onAddTas
                         <span>{g.label}</span>
                         <span style={{ ...S.focusGroupCount, color: g.color }}>{g.items.length}</span>
                       </div>
-                      {g.items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} onTaskDrag={startTaskDrag} taskDragId={dragTaskId} onSetStatus={onSetStatus} onOpenReply={onOpenReply} onClearRsug={onClearRsug} onArrow={arrowMove} onAckSug={onAckSug} onDateMenu={(e, pid, t) => setDateMenu({ x: e.clientX, y: e.clientY, pid, tid: t.id, cur: taskJudgeDate(t) || "" })} />)}
+                      {g.items.map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onSetDeadline={onSetDeadline} onUpdateTask={onUpdateTask} onEditTask={onEditTask} onToggleTask={onToggleTask} onToggleProject={onToggleProject} onDragHandle={startDrag} dragging={dragId === p.id} dragActive={dragId !== null} onTaskDrag={startTaskDrag} taskDragId={dragTaskId} onSetStatus={onSetStatus} onOpenReply={onOpenReply} onNoReply={onNoReply} onArrow={arrowMove} onAckSug={onAckSug} onDateMenu={(e, pid, t) => setDateMenu({ x: e.clientX, y: e.clientY, pid, tid: t.id, cur: taskJudgeDate(t) || "" })} />)}
                     </div>
                   );
                 });
@@ -2093,12 +2100,11 @@ function ProjectsView({ projects, onOpen }) {
   );
 }
 
-function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onToggleTask, onToggleProject, onDragHandle, dragging, dragActive, onTaskDrag, taskDragId, onSetStatus, onOpenReply, onClearRsug, onArrow, onAckSug, onDateMenu }) {
+function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onToggleTask, onToggleProject, onDragHandle, dragging, dragActive, onTaskDrag, taskDragId, onSetStatus, onOpenReply, onNoReply, onArrow, onAckSug, onDateMenu }) {
   // ステータスの確信度（✓一致／?不明／⚠矛盾）と提案バー
   const sug = statusSuggestion(p);
   const [sugDismiss, setSugDismiss] = useState(false);
   // カード上の返信アシスト（未返信＝最後の発言が相手のときだけ表示）
-  const [rsugCopied, setRsugCopied] = useState(false);
   const pcLastIsClient = replyNeeded(p);
   // タスク行の長押し（300ms）でドラッグ開始
   const tLp = useRef(null); const tDown = useRef(null);
@@ -2210,20 +2216,13 @@ function ProjectCard({ p, onOpen, onSetDeadline, onUpdateTask, onEditTask, onTog
           <button style={S.suggestX} title="返信済み扱いにする（新着が来るまで再提案しない）" onClick={(e) => { stop(e); setSugDismiss(true); onAckSug && onAckSug(p.id); }}><X size={13} strokeWidth={2.2} /></button>
         </div>
       )}
-      {!dragActive && pcLastIsClient && p.rsug && (
-        <div style={S.cardRsug} onPointerDown={stop} onClick={(e) => { stop(e); onOpenReply && onOpenReply(p.id); }} title="タップで返信アシストを開く">
-          <Reply size={13} color={C.accent} strokeWidth={2.4} style={{ flexShrink: 0, marginTop: 3 }} />
-          <span style={{ ...S.cardRsugText, ...S.cardRsugClamp }}>{p.rsug.text}</span>
-          <button style={S.cardRsugCopy} onClick={async (e) => { stop(e); const ok = await copyText(p.rsug.text); if (ok) { setRsugCopied(true); setTimeout(() => setRsugCopied(false), 1500); } }}>
-            {rsugCopied ? <Check size={12} strokeWidth={2.8} /> : <Copy size={12} strokeWidth={2.2} />}{rsugCopied ? "OK" : "コピー"}
-          </button>
-        </div>
-      )}
-      {!dragActive && pcLastIsClient && !p.rsug && (
-        <div onPointerDown={stop} onClick={stop}>
-          <button style={S.cardRsugGen} onClick={(e) => { stop(e); onOpenReply && onOpenReply(p.id); }}>
+      {!dragActive && pcLastIsClient && (
+        <div style={S.rsugRow} onPointerDown={stop} onClick={stop}>
+          <button style={{ ...S.cardRsugGen, marginTop: 0 }} onClick={(e) => { stop(e); onOpenReply && onOpenReply(p.id); }}>
             <Reply size={13} strokeWidth={2.4} />返信アシスト
           </button>
+          <button style={S.rsugSkip} title="返信不要（新着が来るまで再表示しない）"
+            onClick={(e) => { stop(e); onNoReply && onNoReply(p.id); }}>返信不要</button>
         </div>
       )}
       {!dragActive && showTasks.length > 0 && (
@@ -2610,7 +2609,7 @@ function InboxPanel() {
   );
 }
 
-function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChangeLane, onChangeDue, onChangeStart, onChangeKind, onAddTask, onReorderTask, onReorderProject, onSortManual, onReorderCommit, onToggleProject, onSetStatus, onOpenReply, onAckSug, activeLane, setActiveLane, singleLane, heldLane, forceNarrow }) {
+function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChangeLane, onChangeDue, onChangeStart, onChangeKind, onAddTask, onReorderTask, onReorderProject, onSortManual, onReorderCommit, onToggleProject, onSetStatus, onOpenReply, onAckSug, onNoReply, activeLane, setActiveLane, singleLane, heldLane, forceNarrow }) {
   const wide = useWideScreen() && !forceNarrow;
   const [adding, setAdding] = useState(null); // 追加中のレーンキー（null=なし）
   const [openDone, setOpenDone] = useState(() => new Set()); // アコーディオンで完了を開いているレーン
@@ -2793,7 +2792,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
         onStartDrag={startGroupDrag} onOpen={onOpen} onToggleProject={onToggleProject}
         onArrow={groupArrow} />
       {dragTid === null && dragGid === null && (
-        <GroupAssist p={g.project} onSetStatus={onSetStatus} onOpenReply={onOpenReply} onAckSug={onAckSug} />
+        <GroupAssist p={g.project} onSetStatus={onSetStatus} onOpenReply={onOpenReply} onAckSug={onAckSug} onNoReply={onNoReply} />
       )}
       {dragGid === null && g.tasks.length > 0 && (
       <div style={S.taskGroupTasks}>
@@ -2915,8 +2914,7 @@ function TasksView({ projects, onToggle, onOpen, onOpenTask, onEditTask, onChang
 
 // 案件グループの見出し（案件名行）。長押し180msでグループごと並べ替えドラッグ、タップで案件詳細
 // 各レーンの案件見出し直下に出すアシスト（⚠ステータス提案＋返信アシスト）。全レーン共通。
-function GroupAssist({ p, onSetStatus, onOpenReply }) {
-  const [copied, setCopied] = useState(false);
+function GroupAssist({ p, onSetStatus, onOpenReply, onAckSug, onNoReply }) {
   const sug = statusSuggestion(p);
   const lastIsClient = replyNeeded(p);
   const warn = sug && sug.mark === "warn" && sug.suggest;
@@ -2931,19 +2929,14 @@ function GroupAssist({ p, onSetStatus, onOpenReply }) {
           <button style={S.suggestX} title="返信済み扱いにする（新着が来るまで再提案しない）" onClick={(e) => { e.stopPropagation(); onAckSug && onAckSug(p.id); }}><X size={13} strokeWidth={2.2} /></button>
         </div>
       )}
-      {lastIsClient && p.rsug && (
-        <div style={S.cardRsug} onClick={() => onOpenReply && onOpenReply(p.id)} title="タップで返信アシストを開く">
-          <Reply size={13} color={C.accent} strokeWidth={2.4} style={{ flexShrink: 0, marginTop: 3 }} />
-          <span style={{ ...S.cardRsugText, ...S.cardRsugClamp }}>{p.rsug.text}</span>
-          <button style={S.cardRsugCopy} onClick={async (e) => { e.stopPropagation(); const ok = await copyText(p.rsug.text); if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1500); } }}>
-            {copied ? <Check size={12} strokeWidth={2.8} /> : <Copy size={12} strokeWidth={2.2} />}{copied ? "OK" : "コピー"}
+      {lastIsClient && (
+        <div style={{ ...S.rsugRow, marginTop: 0 }}>
+          <button style={{ ...S.cardRsugGen, marginTop: 0 }} onClick={() => onOpenReply && onOpenReply(p.id)}>
+            <Reply size={13} strokeWidth={2.4} />返信アシスト
           </button>
+          <button style={S.rsugSkip} title="返信不要（新着が来るまで再表示しない）"
+            onClick={(e) => { e.stopPropagation(); onNoReply && onNoReply(p.id); }}>返信不要</button>
         </div>
-      )}
-      {lastIsClient && !p.rsug && (
-        <button style={{ ...S.cardRsugGen, marginTop: 0 }} onClick={() => onOpenReply && onOpenReply(p.id)}>
-          <Reply size={13} strokeWidth={2.4} />返信アシスト
-        </button>
       )}
     </div>
   );
@@ -3139,7 +3132,47 @@ function AddTaskInline({ projects, onAdd, onCancel }) {
    ============================================================ */
 // ==================== 返信アシストシート ====================
 // 直近のメッセージ＋返信候補＋コピー。候補が無ければ開いた瞬間に強制生成。
-function ReplySheet({ project, onClose, onSaveRsug, onMarkSent, onAddLink }) {
+// ログ1件の表示。相手／自分の境目をはっきりさせ、引用（>）行はまとめて折りたたむ
+function LogMsg({ m }) {
+  const me = m.who === "me";
+  const [openQ, setOpenQ] = useState(false);
+  const blocks = useMemo(() => {
+    const lines = String(m.body || "").split("\n");
+    const out = [];
+    for (const ln of lines) {
+      const q = /^\s*[>＞]/.test(ln);
+      const last = out[out.length - 1];
+      if (last && last.q === q) last.lines.push(ln);
+      else out.push({ q, lines: [ln] });
+    }
+    return out;
+  }, [m.body]);
+  const qLines = blocks.reduce((n, b) => n + (b.q ? b.lines.length : 0), 0);
+  return (
+    <div style={{ ...S.logItem, ...(me ? S.logItemMe : S.logItemClient) }}>
+      <div style={S.logMeta}>
+        <span style={{ ...S.logWho, ...(me ? S.logWhoMe : {}) }}>{me ? "自分" : (m.name || "相手")}</span>
+        <span>{fmtLogAt(m.at)}</span>
+        {m.partial && <span style={{ color: "#D9A23B" }}>一部省略</span>}
+      </div>
+      {blocks.map((b, i) => {
+        const body = b.lines.join("\n").replace(/^\n+|\n+$/g, "");
+        if (b.q) {
+          if (!openQ) return null;
+          return <div key={i} style={S.logQuote}>{body}</div>;
+        }
+        return body.trim() ? <div key={i} style={S.logBody}>{body}</div> : null;
+      })}
+      {qLines > 0 && (
+        <button style={S.logQuoteBtn} onClick={() => setOpenQ((v) => !v)}>
+          {openQ ? "引用を隠す" : `引用 ${qLines}行を表示`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ReplySheet({ project, onClose, onSaveRsug, onMarkSent, onAddLink, onNoReply }) {
   const [claudeReg, setClaudeReg] = useState(false);   // Claudeリンク未登録時の登録UI
   const [claudeUrl, setClaudeUrl] = useState("");
   const wide = useWideScreen();
@@ -3248,15 +3281,7 @@ function ReplySheet({ project, onClose, onSaveRsug, onMarkSent, onAddLink }) {
         <div style={S.rshBody}>
           <div style={S.rshLabel}>直近のメッセージ</div>
           {recent.length === 0 && <div style={S.rshEmpty}>ログがありません。やり取りを貼り付けるかChatworkリンクを登録してください</div>}
-          {recent.map((m) => (
-            <div key={m.id} style={{ ...S.logItem, ...(m.who === "me" ? S.logItemMe : {}) }}>
-              <div style={S.logMeta}>
-                <span>{m.who === "me" ? "自分" : (m.name || "相手")}</span>
-                <span>{fmtLogAt(m.at)}</span>
-              </div>
-              <div style={S.logBody}>{m.body}</div>
-            </div>
-          ))}
+          {recent.map((m) => <LogMsg key={m.id} m={m} />)}
           <div style={{ ...S.rshLabel, marginTop: 12 }}>返信候補</div>
           {busy && <div style={S.rshEmpty}>生成中…</div>}
           {!busy && err && <div style={{ ...S.rshEmpty, color: "#FF8A8A" }}>{err}</div>}
@@ -3302,6 +3327,8 @@ function ReplySheet({ project, onClose, onSaveRsug, onMarkSent, onAddLink }) {
           <button style={S.rshRegen} onClick={claudeNew} title="本文をコピーしてClaudeの新規チャットを開く">
             <MessageCircle size={14} strokeWidth={2.4} />Claude新規チャット
           </button>
+          <button style={S.rshSkipBtn} title="返信不要（新着が来るまで再表示しない）"
+            onClick={() => { onNoReply && onNoReply(project.id); onClose && onClose(); }}>返信不要</button>
           <div style={{ flex: 1 }} />
           <button style={S.rshCopyBtn} onClick={doCopy} disabled={!text || busy}>
             {copied ? <><Check size={15} strokeWidth={2.8} />コピー済</> : <><Copy size={15} strokeWidth={2.2} />コピー</>}
@@ -3377,9 +3404,9 @@ function LogSection({ d, onChange }) {
           <button style={S.logShowAll} onClick={() => setShowAll(true)}>すべて表示（{msgs.length}件）</button>
         )}
         {shown.map((m) => (
-          <div key={m.id} style={{ ...S.logItem, ...(m.who === "me" ? S.logItemMe : {}) }}>
+          <div key={m.id} style={{ ...S.logItem, ...(m.who === "me" ? S.logItemMe : S.logItemClient) }}>
             <div style={S.logMeta}>
-              <span>{m.who === "me" ? "自分" : (m.name || "相手")}</span>
+              <span style={{ ...S.logWho, ...(m.who === "me" ? S.logWhoMe : {}) }}>{m.who === "me" ? "自分" : (m.name || "相手")}</span>
               <span>{fmtLogAt(m.at)}</span>
               {m.partial && <span style={{ color: "#D9A23B" }}>一部省略</span>}
               <button style={S.logDel} title="このログを削除"
@@ -6159,8 +6186,13 @@ const S = {
   // やり取りログ（Phase 1）
   logWrap: { display: "flex", flexDirection: "column", gap: 8, margin: "2px 0 14px 31px" },
   logConsultBtn: { marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, border: "none", borderRadius: 9, background: "rgba(107,138,255,0.16)", color: C.accent, fontWeight: 700, fontSize: 13, padding: "7px 11px", cursor: "pointer" },
-  logItem: { display: "flex", flexDirection: "column", gap: 3, padding: "8px 11px", borderRadius: 10, background: C.panel2 },
-  logItemMe: { background: "rgba(107,138,255,0.09)" },
+  logItem: { display: "flex", flexDirection: "column", gap: 5, padding: "10px 12px", borderRadius: 10, background: C.panel2 },
+  logItemMe: { background: "rgba(107,138,255,0.09)", borderLeft: "3px solid rgba(107,138,255,0.55)" },
+  logItemClient: { borderLeft: "3px solid rgba(217,162,59,0.55)" },
+  logWho: { fontSize: 12.5, fontWeight: 800, color: "#D9A23B" },
+  logWhoMe: { color: C.accent },
+  logQuote: { fontSize: 12.5, color: C.ink3, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.5, paddingLeft: 9, borderLeft: `2px solid ${C.line}` },
+  logQuoteBtn: { alignSelf: "flex-start", border: "none", background: "transparent", color: C.ink3, fontSize: 12, fontWeight: 700, padding: "2px 0", cursor: "pointer" },
   logMeta: { display: "flex", alignItems: "center", gap: 9, fontSize: 12, color: C.ink3, fontWeight: 600 },
   logDel: { marginLeft: "auto", border: "none", background: "transparent", color: C.ink3, cursor: "pointer", padding: 2, display: "inline-flex" },
   logBody: { fontSize: 14, color: C.ink2, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 },
@@ -6199,6 +6231,9 @@ const S = {
   cardRsugText: { flex: 1, minWidth: 0, fontSize: 13, color: C.ink2, lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word", cursor: "pointer" },
   cardRsugClamp: { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
   cardRsugCopy: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4, border: "none", borderRadius: 8, background: "rgba(107,138,255,0.18)", color: C.accent, fontWeight: 800, fontSize: 12, padding: "5px 10px", cursor: "pointer" },
+  rsugRow: { display: "flex", alignItems: "center", gap: 8, marginTop: 9 },
+  rsugSkip: { flexShrink: 0, border: "none", borderRadius: 8, background: "transparent", color: C.ink3, fontWeight: 700, fontSize: 12, padding: "6px 8px", cursor: "pointer" },
+  rshSkipBtn: { flexShrink: 0, border: "none", borderRadius: 9, background: "transparent", color: C.ink3, fontWeight: 700, fontSize: 13, padding: "8px 10px", cursor: "pointer" },
   cardRsugGen: { display: "inline-flex", alignItems: "center", gap: 5, marginTop: 9, border: "none", borderRadius: 8, background: "rgba(107,138,255,0.10)", color: C.accent, fontWeight: 700, fontSize: 12.5, padding: "6px 11px", cursor: "pointer" },
   cardRsugMsg: { marginTop: 5, fontSize: 12, color: C.ink3 },
   rshBody: { flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8 },
