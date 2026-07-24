@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23ao"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23ap"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -355,7 +355,7 @@ function normalizeProjects(arr) {
       status: STATUS_MIGRATE[p.status] || p.status || "進行中",
       start: p.start ?? "",
       msgs: cleanMsgs(Array.isArray(p.msgs) ? p.msgs : []),
-      tsq: p.tsq ? (p.tsq.items ? p.tsq : { srcId: p.tsq.srcId || "", items: p.tsq.title ? [{ title: p.tsq.title, note: p.tsq.note || "", due: p.tsq.due || "", urgent: !!p.tsq.urgent }] : [] }) : null, tsqSeen: p.tsqSeen ?? "", rsug: p.rsug ?? null, rneed: p.rneed ?? null, statusAt: p.statusAt ?? null,
+      tsq: p.tsq ? (p.tsq.items ? p.tsq : { srcId: p.tsq.srcId || "", items: p.tsq.title ? [{ title: p.tsq.title, note: p.tsq.note || "", due: p.tsq.due || "", urgent: !!p.tsq.urgent }] : [] }) : null, tsqSeen: p.tsqSeen ?? "", rsug: p.rsug ?? null, rneed: (p.rneed && p.rneed.need === false && p.rneed.v !== 2) ? null : (p.rneed ?? null), statusAt: p.statusAt ?? null,
       received: p.received ?? "", replyDraft: p.replyDraft ?? "", repliedAt: p.repliedAt ?? null, replyUrl: p.replyUrl ?? "", replyHistory: p.replyHistory ?? [], summary: p.summary ?? "",
       tasks: (p.tasks || []).map((t) => ({ ...t, lane: t.lane || laneFromDue(t.due), kind: t.kind || "task", msg: t.msg ?? "", start: t.start ?? "", note: t.note ?? "", repeat: t.repeat ?? null, doneAt: t.doneAt ?? (t.done ? Date.now() : null) })),
     };
@@ -829,7 +829,7 @@ export default function App() {
           ...p, tsqSeen: cm.id,
           tsq: items.length ? { srcId: cm.id, items } : null,
           rsug: null, // 返信の下書きはHelmでは作らない（Claudeプロジェクトで作る運用）
-          rneed: { srcId: cm.id, need: !!(j.reply && String(j.reply).trim()) },
+          rneed: { srcId: cm.id, need: j.need_reply !== false, v: 2 },
         }));
       } catch (e) {
         const msg = String((e && e.message) || e);
@@ -5194,7 +5194,7 @@ const driveFolderLinkOf = (p) => ((p && p.links) || []).find((l) => /drive\.goog
 // --- ログの新着（相手の最新メッセージ）から依頼を検出しタスク候補を作る（Sonnet・承認制） ---
 // 粒度ルール：報告タイミングが同じものは1件にまとめ、内訳は詳細(note)へ。1メッセージから原則1件。
 async function analyzeIncomingMsg(companyName, recentLog, openTitles) {
-  const sys = 'あなたはフリーランス（高崎・屋号インフォサクセス）の案件管理アシスタントです。クライアントとの直近のやり取りログを読み、いま残っている宿題のタスク化を行い、JSONだけを出力します。説明やコードブロック記法は付けないこと。\n{"tasks":[{"title":"タスク名（25字以内）","note":"内訳の箇条書き（各行を・で始め改行区切り。※既に完了報告済みの項目は含めない。内訳が1つだけ・不要なら空文字）","due":"YYYY-MM-DD（メッセージに期限・締切が明記されている場合のみ。無ければ空文字）","urgent":true|false}]}\nタスクの分け方（重要）：同じ成果物・同じ資料への複数の指示は1件にまとめて内訳をnoteに入れる。ただし別の成果物・別の資料・別の対象物への指示は必ず別々のタスクに分ける（例：「サウナリストの修正」と「WEBセミナー資料の修正」は2件に分ける）。タスクが無ければ空配列 []。\n重複禁止（重要）：ユーザー入力に「登録済みタスク」の一覧が渡された場合、それと同じ内容・実質同じ作業のタスクは絶対に提案しない（言い回しが違っても作業が同じなら提案しない）。全て登録済みなら空配列。\nタスク判定基準（重要）：ログ全体を時系列で読み、相手からの依頼のうち「その後に自分（高崎）が完了・提出・送付・反映済みと報告していないもの」だけをタスク化する。全て対応済み、または挨拶・お礼・進捗確認・支払い連絡のみなら tasks は空配列。\nurgentの規則：至急・本日中・今日中・ASAPなど緊急性が高い表現があればtrue、通常はfalse。今日は' + dStr(0) + '。';
+  const sys = 'あなたはフリーランス（高崎・屋号インフォサクセス）の案件管理アシスタントです。クライアントとの直近のやり取りログを読み、いま残っている宿題のタスク化と、返信要否の判定を行い、JSONだけを出力します。説明やコードブロック記法は付けないこと。\n{"tasks":[{"title":"タスク名（25字以内）","note":"内訳の箇条書き（各行を・で始め改行区切り。※既に完了報告済みの項目は含めない。内訳が1つだけ・不要なら空文字）","due":"YYYY-MM-DD（メッセージに期限・締切が明記されている場合のみ。無ければ空文字）","urgent":true|false}],"need_reply":true|false}\nneed_replyの規則：相手の最新メッセージに質問・依頼・確認・提案が含まれるならtrue。締めの挨拶・お礼のみ・こちらの対応不要な単なる報告ならfalse。迷ったら必ずtrue。\nタスクの分け方（重要）：同じ成果物・同じ資料への複数の指示は1件にまとめて内訳をnoteに入れる。ただし別の成果物・別の資料・別の対象物への指示は必ず別々のタスクに分ける（例：「サウナリストの修正」と「WEBセミナー資料の修正」は2件に分ける）。タスクが無ければ空配列 []。\n重複禁止（重要）：ユーザー入力に「登録済みタスク」の一覧が渡された場合、それと同じ内容・実質同じ作業のタスクは絶対に提案しない（言い回しが違っても作業が同じなら提案しない）。全て登録済みなら空配列。\nタスク判定基準（重要）：ログ全体を時系列で読み、相手からの依頼のうち「その後に自分（高崎）が完了・提出・送付・反映済みと報告していないもの」だけをタスク化する。全て対応済み、または挨拶・お礼・進捗確認・支払い連絡のみなら tasks は空配列。\nurgentの規則：至急・本日中・今日中・ASAPなど緊急性が高い表現があればtrue、通常はfalse。今日は' + dStr(0) + '。';
   const taskCtx = (openTitles && openTitles.length) ? `\n\n登録済みタスク（これらと同内容は提案しない）:\n${openTitles.map((t) => "・" + t).join("\n")}` : "";
   const out = await callClaude({ system: sys, user: `案件「${companyName || ""}」の直近のやり取り（時系列）:\n\n${recentLog}${taskCtx}`, maxTokens: 900 });
   const clean = out.replace(/```json|```/g, "").trim();
