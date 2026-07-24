@@ -69,7 +69,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 const STORE_KEY = "cockpit:projects:v2";
 const SYNC_KEY = "cockpit:sync:v1";
 const META_KEY = "cockpit:meta:v1"; // 同期のリビジョン等
-const BUILD_TAG = "2026-07-23am"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
+const BUILD_TAG = "2026-07-23an"; // ビルド識別（端末間で同じ版かの確認用。実装追加ごとに更新）
 
 // ==================== Chatwork自動対応システム（対応待ちパネル） ====================
 // ★ここを書き換える（/exec で終わるGAS WebアプリURLと WEBAPP_TOKEN）
@@ -1505,8 +1505,8 @@ export default function App() {
           if (!nReply && !nSug) return null;
           return (
             <div style={wide ? S.alertWrapPc : S.alertWrapSp} title="要返信／ステータス変更の提案がある案件数">
-              {nReply > 0 && <span style={{ ...S.alertChip, color: "#6B8AFF" }}><Reply size={12} strokeWidth={2.6} />{nReply}</span>}
-              {nSug > 0 && <span style={{ ...S.alertChip, color: "#D9A23B" }}><AlertTriangle size={12} strokeWidth={2.6} />{nSug}</span>}
+              {nReply > 0 && <span style={{ ...S.alertChip, ...(wide ? {} : S.alertChipSp), color: "#6B8AFF" }}><Reply size={wide ? 12 : 11} strokeWidth={2.6} />{nReply}</span>}
+              {nSug > 0 && <span style={{ ...S.alertChip, ...(wide ? {} : S.alertChipSp), color: "#D9A23B" }}><AlertTriangle size={wide ? 12 : 11} strokeWidth={2.6} />{nSug}</span>}
             </div>
           );
         })()}
@@ -1523,18 +1523,18 @@ export default function App() {
             <span style={S.headerKpiValue}>{kpi.revenue ? yenMan(kpi.revenue) : "—"}</span>
           </div>
         )}
-        <nav style={S.tabs}>
+        <nav style={{ ...S.tabs, ...(wide ? {} : S.tabsSp) }}>
           <button onClick={() => setShowSearch(true)} title="検索（Ctrl+K）" aria-label="検索"
-            style={S.tab}>
-            <Search size={22} strokeWidth={2} />
+            style={{ ...S.tab, ...(wide ? {} : S.tabSp) }}>
+            <Search size={wide ? 22 : 17} strokeWidth={2} />
           </button>
           {!triPane && [
             ["focus", "フォーカス", LayoutDashboard],
             ["calendar", "カレンダー", CalendarDays],
           ].map(([k, label, Icon]) => (
             <button key={k} onClick={() => go(k)} title={label} aria-label={label}
-              style={{ ...S.tab, ...(view === k ? S.tabOn : {}) }}>
-              <Icon size={22} strokeWidth={view === k ? 2.4 : 2} />
+              style={{ ...S.tab, ...(wide ? {} : S.tabSp), ...(view === k ? S.tabOn : {}) }}>
+              <Icon size={wide ? 22 : 17} strokeWidth={view === k ? 2.4 : 2} />
             </button>
           ))}
         </nav>
@@ -5628,8 +5628,8 @@ const S = {
   center: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh" },
 
   header: {
-    position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", gap: 9,
-    padding: "10px 14px", background: "rgba(0,0,0,0.97)",
+    position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", gap: 7,
+    padding: "10px 12px", background: "rgba(0,0,0,0.97)", overflow: "hidden",
     borderBottom: `1px solid ${C.line}`, flexWrap: "nowrap",
   },
   brand: { display: "flex", alignItems: "center", gap: 10, marginRight: "auto", flexShrink: 0 },
@@ -5645,13 +5645,16 @@ const S = {
   alertWrapPc: { display: "inline-flex", alignItems: "center", gap: 7, marginRight: 2 },
   alertWrapSp: { display: "inline-flex", alignItems: "center", gap: 5 },
   alertChip: { display: "inline-flex", alignItems: "center", gap: 3.5, fontFamily: F.disp, fontSize: 13.5, fontWeight: 800, background: C.panel2, border: `1px solid ${C.line}`, borderRadius: 20, padding: "3px 9px", whiteSpace: "nowrap" },
+  alertChipSp: { fontSize: 12, gap: 2.5, padding: "2px 6px", border: "none" },
   headerRefresh: { display: "inline-flex", alignItems: "center", gap: 6, border: `1px solid ${C.line}`, background: "transparent", color: C.ink2, borderRadius: 9, padding: "6px 12px", fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", cursor: "pointer" },
   headerKpiLabel: { fontSize: 12, color: C.ink2, fontWeight: 600 },
   headerKpiValue: { fontFamily: F.disp, fontWeight: 800, fontSize: 15, color: C.ink, letterSpacing: 0.3, fontVariantNumeric: "tabular-nums" },
   headerKpiDivider: { width: 1, height: 16, background: C.line, margin: "0 2px" },
   brandSub: { fontSize: 14, color: C.ink3, marginTop: 2 },
 
-  tabs: { display: "flex", gap: 4, background: C.panel2, padding: 4, borderRadius: 12, border: `1px solid ${C.line}` },
+  tabs: { display: "flex", gap: 4, background: C.panel2, padding: 4, borderRadius: 12, border: `1px solid ${C.line}`, flexShrink: 0 },
+  tabsSp: { gap: 2, padding: 3, borderRadius: 10 },
+  tabSp: { padding: "6px 8px", borderRadius: 8 },
   tab: {
     display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: "transparent",
     color: C.ink3, width: 48, height: 42, borderRadius: 10, transition: "color 0.12s, background 0.12s",
